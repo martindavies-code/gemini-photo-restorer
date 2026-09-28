@@ -128,6 +128,8 @@ def select_folder(cli_folder: Optional[str]) -> Path:
         if not chosen.is_dir():
             print(f"[x] Error: Specified path '{cli_folder}' is not a directory.")
             sys.exit(1)
+        if chosen.name.upper() == "FULLSIZE":
+            chosen = chosen.parent
         config["last_folder"] = str(chosen)
         save_config(config)
         return chosen
@@ -201,6 +203,10 @@ def restore_image(client, image_path: Path, output_path: Path, model_name: str =
             image_bytes = f.read()
     except Exception as e:
         print(f"    [!] Error reading file: {e}")
+        return False
+
+    if not image_bytes or len(image_bytes) == 0:
+        print(f"    [!] Skipping empty or unreadable image (0 bytes): {image_path.name}")
         return False
 
     temp_output_path = output_path.with_suffix(".tmp")

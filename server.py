@@ -67,9 +67,23 @@ class StudioRequestHandler(SimpleHTTPRequestHandler):
             pass
 
     def end_headers(self):
-        # Security headers for local studio execution
+        # Military-grade security headers for local studio execution
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        csp = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' blob: data:; "
+            "connect-src 'self' https://generativelanguage.googleapis.com; "
+            "object-src 'none'; "
+            "base-uri 'self';"
+        )
+        self.send_header("Content-Security-Policy", csp)
         super().end_headers()
 
     def log_message(self, format, *args):

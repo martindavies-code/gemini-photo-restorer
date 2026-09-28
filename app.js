@@ -32,6 +32,7 @@ const state = {
   filesQueue: [], // Array of { id, file, originalUrl, restoredUrl, restoredBlob, status, duration, error }
   isProcessing: false,
   shouldStop: false,
+  activeAbortController: null,
   activeCompareItem: null,
   allocatedUrls: new Set()
 };
@@ -42,6 +43,7 @@ const el = {
   step2: document.getElementById('stepIndicator2'),
   step3: document.getElementById('stepIndicator3'),
   pickFolderBtn: document.getElementById('pickFolderBtn'),
+  reopenFolderBtn: document.getElementById('reopenFolderBtn'),
   pickFilesBtn: document.getElementById('pickFilesBtn'),
   fallbackFolderInput: document.getElementById('fallbackFolderInput'),
   fallbackFilesInput: document.getElementById('fallbackFilesInput'),
@@ -122,6 +124,44 @@ function cleanupAllUrls() {
   state.allocatedUrls.clear();
 }
 
+// Persistent Folder Memory via Zero-Dependency IndexedDB
+const IDB_KEY = 'atelier_last_dir_handle';
+function openHandleDb() {
+  return new Promise((resolve) => {
+    if (!('indexedDB' in window)) return resolve(null);
+    const req = indexedDB.open('Atelier8K_Storage', 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore('handles');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+}
+
+async function saveStoredDirectoryHandle(handle) {
+  try {
+    const db = await openHandleDb();
+    if (!db) return;
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').put(handle, IDB_KEY);
+  } catch (_) {}
+}
+
+async function getStoredDirectoryHandle() {
+  try {
+    const db = await openHandleDb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      const tx = db.transaction('handles', 'readonly');
+      const req = tx.objectStore('handles').get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
   await tryFetchLocalConfig();
@@ -137,6 +177,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSplitSlider();
   setupDialogBackdropDismiss();
   updateWorkflowStep();
+
+  // Check if a previously selected directory handle exists in IndexedDB
+  const storedHandle = await getStoredDirectoryHandle();
+  if (storedHandle && el.reopenFolderBtn) {
+    el.reopenFolderBtn.style.display = 'inline-flex';
+    el.reopenFolderBtn.title = `Reopen previously chosen folder: ${storedHandle.name}`;
+    const span = el.reopenFolderBtn.querySelector('span');
+    if (span) span.textContent = `↺ Reopen ${storedHandle.name}`;
+  }
 
   window.addEventListener('beforeunload', cleanupAllUrls);
 });
@@ -193,6 +242,9 @@ function setupDialogBackdropDismiss() {
 function setupEventListeners() {
   // Folder & File Picking
   el.pickFolderBtn.addEventListener('click', handleFolderPick);
+  if (el.reopenFolderBtn) {
+    el.reopenFolderBtn.addEventListener('click', reopenSavedFolder);
+  }
   el.dropzoneFolderBtn.addEventListener('click', handleFolderPick);
   el.pickFilesBtn.addEventListener('click', () => el.fallbackFilesInput.click());
 
@@ -216,7 +268,7 @@ function setupEventListeners() {
 
   // Batch Execution
   el.startBatchBtn.addEventListener('click', startBatchProcessing);
-  el.stopBatchBtn.addEventListener('click', () => { state.shouldStop = true; });
+  el.stopBatchBtn.addEventListener('click', handleStopProcessing);
 
   // Queue tools
   el.clearAllBtn.addEventListener('click', clearQueue);
@@ -233,7 +285,7 @@ function setupEventListeners() {
   el.closeSettingsBtn.addEventListener('click', () => el.settingsDialog.close());
   el.resetPromptBtn.addEventListener('click', () => { el.promptInput.value = DEFAULT_PROMPT; });
   el.saveSettingsBtn.addEventListener('click', () => {
-    state.apiKey = el.apiKeyInput.value.trim().replace(/^["']|["']$/g, '');
+    state.apiKey = el.apiKeyInput.value.trim().replace(/^["']+|["']+$/g, '');
     state.model = el.modelSelect.value;
     state.resolution = el.resolutionSelect.value;
     state.prompt = el.promptInput.value.trim() || DEFAULT_PROMPT;
@@ -258,34 +310,56 @@ function setupEventListeners() {
   });
 }
 
+async function loadDirectoryHandle(dirHandle) {
+  state.dirHandle = dirHandle;
+  await saveStoredDirectoryHandle(dirHandle);
+
+  if (el.reopenFolderBtn) {
+    el.reopenFolderBtn.style.display = 'none';
+  }
+
+  el.currentFolderLabel.textContent = dirHandle.name;
+  el.outputFolderLabel.innerHTML = `Outputs will save directly to <mark>${dirHandle.name}/FULLSIZE/</mark>`;
+
+  state.fullsizeHandle = await dirHandle.getDirectoryHandle('FULLSIZE', { create: true });
+
+  const files = [];
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === 'file') {
+      const file = await entry.getFile();
+      if (isImageFile(file.name)) {
+        files.push(file);
+      }
+    }
+  }
+
+  addFilesToQueue(files);
+}
+
+async function reopenSavedFolder() {
+  const storedHandle = await getStoredDirectoryHandle();
+  if (!storedHandle) return;
+  try {
+    if (!(await verifyHandlePermission(storedHandle, true))) {
+      alert('Permission to access previously chosen folder was not granted.');
+      return;
+    }
+    await loadDirectoryHandle(storedHandle);
+  } catch (err) {
+    console.error('Error reopening stored folder:', err);
+    if (el.reopenFolderBtn) el.reopenFolderBtn.style.display = 'none';
+  }
+}
+
 // Directory Picking via File System Access API
 async function handleFolderPick() {
   if ('showDirectoryPicker' in window) {
     try {
-      state.dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-      
-      // Verify readwrite permission explicitly
-      if (!(await verifyHandlePermission(state.dirHandle, true))) {
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      if (!(await verifyHandlePermission(handle, true))) {
         throw new Error('Permission to write to chosen folder was denied.');
       }
-
-      el.currentFolderLabel.textContent = state.dirHandle.name;
-      el.outputFolderLabel.innerHTML = `Outputs will save directly to <mark>${state.dirHandle.name}/FULLSIZE/</mark>`;
-
-      // Get or create FULLSIZE directory handle
-      state.fullsizeHandle = await state.dirHandle.getDirectoryHandle('FULLSIZE', { create: true });
-
-      const files = [];
-      for await (const entry of state.dirHandle.values()) {
-        if (entry.kind === 'file') {
-          const file = await entry.getFile();
-          if (isImageFile(file.name)) {
-            files.push(file);
-          }
-        }
-      }
-
-      addFilesToQueue(files);
+      await loadDirectoryHandle(handle);
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('File system access error:', err);
@@ -429,8 +503,9 @@ async function retrySingleImage(item) {
   updateCardStatus(item);
 
   const t0 = performance.now();
+  state.activeAbortController = new AbortController();
   try {
-    const restoredBlob = await callGeminiImageRestoration(item.file);
+    const restoredBlob = await callGeminiImageRestoration(item.file, state.activeAbortController.signal);
     item.restoredBlob = restoredBlob;
     if (item.restoredUrl) revokeManagedUrl(item.restoredUrl);
     item.restoredUrl = createManagedUrl(restoredBlob);
@@ -449,9 +524,16 @@ async function retrySingleImage(item) {
       }
     }
   } catch (err) {
+    if (err.name === 'AbortError') {
+      item.status = 'ready';
+      updateCardStatus(item);
+      return;
+    }
     console.error(`Error retrying ${item.file.name}:`, err);
     item.status = 'error';
     item.error = err.message || 'Restoration failed';
+  } finally {
+    state.activeAbortController = null;
   }
 
   updateCardStatus(item);
@@ -520,6 +602,14 @@ function createCardElement(item) {
 }
 
 // Batch Execution
+function handleStopProcessing() {
+  state.shouldStop = true;
+  if (state.activeAbortController) {
+    state.activeAbortController.abort();
+    state.activeAbortController = null;
+  }
+}
+
 async function startBatchProcessing() {
   if (!state.apiKey) {
     el.settingsDialog.showModal();
@@ -529,6 +619,7 @@ async function startBatchProcessing() {
 
   state.isProcessing = true;
   state.shouldStop = false;
+  state.activeAbortController = null;
   el.startBatchBtn.disabled = true;
   el.stopBatchBtn.style.display = 'inline-flex';
   el.progressSection.style.display = 'flex';
@@ -552,8 +643,9 @@ async function startBatchProcessing() {
     updateProgress(processed, total, `Restoring [${i + 1} of ${total}] ${item.file.name}...`);
 
     const t0 = performance.now();
+    state.activeAbortController = new AbortController();
     try {
-      const restoredBlob = await callGeminiImageRestoration(item.file);
+      const restoredBlob = await callGeminiImageRestoration(item.file, state.activeAbortController.signal);
       item.restoredBlob = restoredBlob;
       if (item.restoredUrl) revokeManagedUrl(item.restoredUrl);
       item.restoredUrl = createManagedUrl(restoredBlob);
@@ -573,17 +665,33 @@ async function startBatchProcessing() {
         }
       }
     } catch (err) {
+      if (err.name === 'AbortError' || state.shouldStop) {
+        console.warn(`Restoration aborted for ${item.file.name}`);
+        item.status = 'ready';
+        updateCardStatus(item);
+        break;
+      }
       console.error(`Error restoring ${item.file.name}:`, err);
       item.status = 'error';
       item.error = err.message || 'Restoration failed';
+    } finally {
+      state.activeAbortController = null;
     }
 
     processed++;
     updateCardStatus(item);
     updateProgress(processed, total, `Finished ${item.file.name}`);
 
-    // Standard rate limit buffer
-    await new Promise(r => setTimeout(r, 1000));
+    if (state.shouldStop) break;
+
+    // Standard rate limit buffer with abort capability
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      if (state.shouldStop) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
   }
 
   state.isProcessing = false;
@@ -652,8 +760,8 @@ function updateCardStatus(item) {
   }
 }
 
-// Call Gemini 3 Pro Image API with Memory-Efficient Binary Decoding
-async function callGeminiImageRestoration(file) {
+// Call Gemini 3 Pro Image API with Memory-Efficient Binary Decoding and Resilient Exponential Retries
+async function callGeminiImageRestoration(file, signal = null) {
   const base64Data = await fileToBase64(file);
   const mimeType = file.type || 'image/jpeg';
 
@@ -682,44 +790,96 @@ async function callGeminiImageRestoration(file) {
     }
   };
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  const maxRetries = 3;
+  let lastError = null;
 
-  if (!response.ok) {
-    let errMessage = `API Error ${response.status}`;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal && signal.aborted) {
+      throw new DOMException('Restoration aborted by user', 'AbortError');
+    }
+
     try {
-      const errJson = await response.json();
-      if (errJson.error && errJson.error.message) {
-        errMessage = errJson.error.message;
-      }
-    } catch (_) {
-      const text = await response.text();
-      if (text) errMessage += `: ${text}`;
-    }
-    throw new Error(errMessage);
-  }
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: signal || undefined
+      });
 
-  const json = await response.json();
-
-  if (json.candidates && json.candidates[0].content && json.candidates[0].content.parts) {
-    for (const part of json.candidates[0].content.parts) {
-      if (part.inlineData && part.inlineData.data) {
-        const binaryString = atob(part.inlineData.data);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
+      if (!response.ok) {
+        let errMessage = `API Error ${response.status}`;
+        try {
+          const errJson = await response.json();
+          if (errJson.error && errJson.error.message) {
+            errMessage = errJson.error.message;
+          }
+        } catch (_) {
+          const text = await response.text();
+          if (text) errMessage += `: ${text}`;
         }
-        return new Blob([bytes], { type: part.inlineData.mimeType || 'image/png' });
+
+        // Retry on 429 (Rate Limit) and 5xx (Server/Overload Error)
+        const isTransient = response.status === 429 || (response.status >= 500 && response.status < 600);
+        if (isTransient && attempt < maxRetries) {
+          const delay = (2 ** attempt) * 2000 + Math.random() * 1000;
+          console.warn(`Gemini API returned ${response.status}. Retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, delay);
+            if (signal) {
+              signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                reject(new DOMException('Restoration aborted by user', 'AbortError'));
+              }, { once: true });
+            }
+          });
+          continue;
+        }
+
+        throw new Error(errMessage);
       }
+
+      const json = await response.json();
+
+      if (json.candidates && json.candidates[0].content && json.candidates[0].content.parts) {
+        for (const part of json.candidates[0].content.parts) {
+          if (part.inlineData && part.inlineData.data) {
+            const binaryString = atob(part.inlineData.data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return new Blob([bytes], { type: part.inlineData.mimeType || 'image/png' });
+          }
+        }
+      }
+
+      const finishReason = json.candidates?.[0]?.finishReason || 'NO_IMAGE_RETURNED';
+      throw new Error(`Model completed without image (${finishReason})`);
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw err;
+      }
+      lastError = err;
+      if (attempt < maxRetries && (err instanceof TypeError || err.message?.includes('fetch'))) {
+        const delay = (2 ** attempt) * 2000 + Math.random() * 1000;
+        console.warn(`Network error encountered (${err.message}). Retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, delay);
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              reject(new DOMException('Restoration aborted by user', 'AbortError'));
+            }, { once: true });
+          }
+        });
+        continue;
+      }
+      throw err;
     }
   }
 
-  const finishReason = json.candidates?.[0]?.finishReason || 'NO_IMAGE_RETURNED';
-  throw new Error(`Model completed without image (${finishReason})`);
+  throw lastError || new Error('Image restoration failed after maximum retry attempts');
 }
 
 function fileToBase64(file) {
@@ -749,6 +909,7 @@ function setSliderPosition(percentage) {
   const pos = Math.max(0, Math.min(100, percentage));
   el.afterWrapper.style.width = `${pos}%`;
   el.splitDivider.style.left = `${pos}%`;
+  el.sliderContainer.setAttribute('aria-valuenow', Math.round(pos).toString());
 }
 
 function setupSplitSlider() {
@@ -782,6 +943,25 @@ function setupSplitSlider() {
     }
   }, { passive: true });
 
+  // Keyboard accessibility
+  el.sliderContainer.addEventListener('keydown', (e) => {
+    let currentPos = parseFloat(el.sliderContainer.getAttribute('aria-valuenow')) || 50;
+    const step = e.shiftKey ? 10 : 2;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSliderPosition(Math.max(0, currentPos - step));
+    } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSliderPosition(Math.min(100, currentPos + step));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setSliderPosition(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setSliderPosition(100);
+    }
+  });
+
   if (window.ResizeObserver) {
     const observer = new ResizeObserver(() => {
       if (el.compareDialog.open) {
@@ -811,7 +991,7 @@ function openCompareModal(item) {
   });
 }
 
-// In-Browser Native Zero-Dependency ZIP Packaging
+// In-Browser Native Zero-Dependency ZIP Packaging (RFC 1951 / PKZip Spec Compliant)
 function createZipBlob(files) {
   const fileRecords = [];
   let offset = 0;
@@ -850,7 +1030,7 @@ function createZipBlob(files) {
 
     view.setUint32(0, 0x04034b50, true); // signature
     view.setUint16(4, 20, true);         // version needed
-    view.setUint16(6, 0, true);          // flags
+    view.setUint16(6, 0x0800, true);     // flags (Bit 11: UTF-8)
     view.setUint16(8, 0, true);          // compression (store = 0)
     view.setUint16(10, dosTime, true);   // valid MS-DOS mod time
     view.setUint16(12, dosDate, true);   // valid MS-DOS mod date
@@ -879,10 +1059,10 @@ function createZipBlob(files) {
     view.setUint32(0, 0x02014b50, true); // signature
     view.setUint16(4, 20, true);         // version made by
     view.setUint16(6, 20, true);         // version needed
-    view.setUint16(8, 0, true);          // flags
-    view.setUint16(10, 0, true);         // compression
-    view.setUint16(10, dosTime, true);   // valid MS-DOS mod time
-    view.setUint16(12, dosDate, true);   // valid MS-DOS mod date
+    view.setUint16(8, 0x0800, true);     // flags (Bit 11: UTF-8)
+    view.setUint16(10, 0, true);         // compression (store = 0)
+    view.setUint16(12, dosTime, true);   // valid MS-DOS mod time
+    view.setUint16(14, dosDate, true);   // valid MS-DOS mod date
     view.setUint32(16, record.crc, true);// crc-32
     view.setUint32(20, record.size, true);// compressed size
     view.setUint32(24, record.size, true);// uncompressed size

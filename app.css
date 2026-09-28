@@ -666,6 +666,12 @@ body {
   touch-action: none;
 }
 
+.split-viewport:focus-visible {
+  outline: 2px solid var(--color-accent-warm);
+  outline-offset: 2px;
+  border-color: var(--color-accent-warm);
+}
+
 .split-frame {
   position: absolute;
   top: 0;
