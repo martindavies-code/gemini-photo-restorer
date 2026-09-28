@@ -312,6 +312,94 @@ kbd {
   margin: 0 1px;
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   LABEL WITH ACTION (flex row for label + live status)
+   ───────────────────────────────────────────────────────────────────── */
+.label-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   CARD IMAGE LOADING SKELETON
+   Shows a shimmer while thumbnail loads — prevents layout shift.
+   ───────────────────────────────────────────────────────────────────── */
+.card-preview {
+  position: relative;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.card-preview img {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  object-fit: cover;
+}
+
+/* Shimmer overlay that shows while the image src is resolving */
+.card-preview img:not([src]),
+.card-preview img[src=""] {
+  visibility: hidden;
+}
+
+.card-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(255,255,255,0.04) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Hide the shimmer once image has loaded (JS adds .img-loaded class) */
+.card-preview.img-loaded::before {
+  display: none;
+}
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   PREFERS-REDUCED-MOTION
+   Honour the OS-level "reduce motion" preference. Disables all
+   animations and transitions globally. WCAG 2.1 Success Criterion 2.3.3.
+   ───────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration:        0.01ms !important;
+    animation-iteration-count: 1      !important;
+    transition-duration:       0.01ms !important;
+    scroll-behavior:           auto   !important;
+  }
+
+  /* Pulse animations on the API key pill and engine dot */
+  .api-key-missing,
+  .engine-dot {
+    animation: none !important;
+  }
+
+  /* Skeleton shimmer */
+  .card-preview::before {
+    animation: none !important;
+    background: none;
+  }
+}
+
 :root {
   /* Surface hierarchy — true darkroom depth */
   --bg-void:         #060709;
@@ -330,11 +418,11 @@ kbd {
   --border-focus:    rgba(201, 121, 40, 0.7);
   --border-accent:   rgba(201, 121, 40, 0.35);
 
-  /* Text hierarchy */
+  /* Text hierarchy — WCAG AA compliant contrast on dark surfaces */
   --text-primary:    #f0f2f5;
-  --text-secondary:  #8b93a6;
-  --text-muted:      #4e5768;
-  --text-whisper:    #343d4f;
+  --text-secondary:  #9ba3b5;   /* raised from 8b93a6 for WCAG AA on bg-panel */
+  --text-muted:      #5e6a7e;   /* raised from 4e5768 */
+  --text-whisper:    #3d4858;
 
   /* Amber / Gold accent family */
   --amber-vivid:     #e8903a;

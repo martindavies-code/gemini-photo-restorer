@@ -323,3 +323,86 @@ test('URL memory lifecycle tracker tracks and deallocates without leaks', () => 
   assert.equal(revoked.length, 3);
 });
 
+test('XSS escapeHtml sanitizes special characters properly', () => {
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  assert.equal(escapeHtml('<script>alert("xss")</script>'), '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+  assert.equal(escapeHtml('Tom & Jerry\'s "Photo"'), 'Tom &amp; Jerry&#039;s &quot;Photo&quot;');
+  assert.equal(escapeHtml('SafeName_123.jpg'), 'SafeName_123.jpg');
+});
+
+test('parseGeminiError classifies API error codes to human-readable text', () => {
+  function parseGeminiError(err) {
+    const msg = (err?.message || '').toLowerCase();
+    if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted'))
+      return 'Rate limit hit — wait a moment and retry';
+    if (msg.includes('401') || msg.includes('api key not valid') || msg.includes('permission_denied'))
+      return 'Invalid API key — check Preferences';
+    if (msg.includes('403'))
+      return 'API key lacks permission — check Google AI Studio';
+    if (msg.includes('400') && msg.includes('request'))
+      return 'Bad request — image may be too large or malformed';
+    if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed'))
+      return 'Network error — check your connection';
+    if (msg.includes('no image') || msg.includes('no_image') || msg.includes('finishreason'))
+      return 'Model returned no image — try a different image or prompt';
+    return err?.message || 'Restoration failed';
+  }
+
+  assert.equal(parseGeminiError({ message: 'Error 429: Resource has been exhausted' }), 'Rate limit hit — wait a moment and retry');
+  assert.equal(parseGeminiError({ message: 'API key not valid. Please pass a valid API key.' }), 'Invalid API key — check Preferences');
+  assert.equal(parseGeminiError({ message: 'Failed to fetch' }), 'Network error — check your connection');
+  assert.equal(parseGeminiError({ message: 'Custom server crash' }), 'Custom server crash');
+});
+
+test('Aspect ratio log-scale distance minimizes geometric distortion', () => {
+  const GEMINI_ASPECT_RATIOS = [
+    { label: '1:1',  value: 1.0 },
+    { label: '4:3',  value: 4 / 3 },
+    { label: '3:4',  value: 3 / 4 },
+    { label: '3:2',  value: 3 / 2 },
+    { label: '2:3',  value: 2 / 3 },
+    { label: '16:9', value: 16 / 9 },
+    { label: '9:16', value: 9 / 16 },
+    { label: '5:4',  value: 5 / 4 },
+    { label: '4:5',  value: 4 / 5 },
+    { label: '21:9', value: 21 / 9 },
+  ];
+
+  function matchAspectRatio(width, height) {
+    if (!width || !height) return '1:1';
+    const target = Math.log(width / height);
+    let best = GEMINI_ASPECT_RATIOS[0];
+    let bestDist = Infinity;
+    for (const ratio of GEMINI_ASPECT_RATIOS) {
+      const dist = Math.abs(target - Math.log(ratio.value));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = ratio;
+      }
+    }
+    return best.label;
+  }
+
+  // Exact matches
+  assert.equal(matchAspectRatio(1000, 1000), '1:1');
+  assert.equal(matchAspectRatio(1920, 1080), '16:9');
+  assert.equal(matchAspectRatio(1080, 1920), '9:16');
+  assert.equal(matchAspectRatio(4000, 3000), '4:3');
+  assert.equal(matchAspectRatio(3000, 4000), '3:4');
+  assert.equal(matchAspectRatio(6000, 4000), '3:2');
+  assert.equal(matchAspectRatio(4000, 6000), '2:3');
+  assert.equal(matchAspectRatio(2560, 1080), '21:9');
+
+  // Slight variance (e.g. 1920x1200 is 16:10 = 1.6, closest to 3:2 = 1.5)
+  assert.equal(matchAspectRatio(1920, 1200), '3:2');
+});
+
+

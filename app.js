@@ -88,7 +88,7 @@ Perform a forensic restoration and massive upscale of this image to 8K resolutio
 
 The final output must be a hyper-realistic, 8K resolution image. The aesthetic should match a RAW file taken with a high-end medium format camera (like a Phase One) and a prime lens at f/2.8.
 
-Do not alter the fundamental composition or the identity of the subject. Strictly avoid the "waxy," "plastic," or overly smooth look common in AI upscaling. Do not over-saturate colours. Do not introduce over-sharpening halos. Ensure facial features remain anatomically correct and true to the original.`;
+Do not alter the fundamental composition or the identity of the subject. Strictly avoid the "waxy," "plastic," or overly smooth look common in AI upscaling. Do not over-saturate colours. Do not introduce over-sharpening halos. Ensure facial features remain anatomically correct and true to the original. Strictly preserve the original aspect ratio, framing, and physical geometry. Do NOT stretch, squash, crop, letterbox, pillarbox, pad, or alter the geometric perspective of the source image in any way.`;
 
 // Gemini-supported aspect ratios with their numeric values (width/height)
 const GEMINI_ASPECT_RATIOS = [
@@ -113,9 +113,34 @@ const GEMINI_ASPECT_RATIOS = [
  */
 async function detectAspectRatio(file) {
   try {
-    const bitmap = await createImageBitmap(file);
-    const { width, height } = bitmap;
-    bitmap.close();
+    let width = 0;
+    let height = 0;
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(file);
+        width = bitmap.width;
+        height = bitmap.height;
+        bitmap.close();
+      } catch (_) {}
+    }
+    if (!width || !height) {
+      const dimensions = await new Promise((resolve) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          const dims = { width: img.naturalWidth, height: img.naturalHeight };
+          URL.revokeObjectURL(url);
+          resolve(dims);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve({ width: 0, height: 0 });
+        };
+        img.src = url;
+      });
+      width = dimensions.width;
+      height = dimensions.height;
+    }
     if (!width || !height) return '1:1';
     const target = Math.log(width / height);
     let best = GEMINI_ASPECT_RATIOS[0];
@@ -130,6 +155,55 @@ async function detectAspectRatio(file) {
     return best.label;
   } catch {
     return '1:1';
+  }
+}
+
+// ─── XSS Guard ───────────────────────────────────────────────────────────────
+// Always escape user-controlled strings before injecting into innerHTML.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ─── Gemini Error Classifier ─────────────────────────────────────────────────
+// Converts raw API error messages into user-actionable English.
+function parseGeminiError(err) {
+  const msg = (err?.message || '').toLowerCase();
+  if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted'))
+    return 'Rate limit hit — wait a moment and retry';
+  if (msg.includes('401') || msg.includes('api key not valid') || msg.includes('permission_denied'))
+    return 'Invalid API key — check Preferences';
+  if (msg.includes('403'))
+    return 'API key lacks permission — check Google AI Studio';
+  if (msg.includes('400') && msg.includes('request'))
+    return 'Bad request — image may be too large or malformed';
+  if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed'))
+    return 'Network error — check your connection';
+  if (msg.includes('no image') || msg.includes('no_image') || msg.includes('finishreason'))
+    return 'Model returned no image — try a different image or prompt';
+  return err?.message || 'Restoration failed';
+}
+
+// ─── Focus Return Map & Dialog Manager ───────────────────────────────────────
+// Stores the element that was focused when a dialog opened, so we can
+// restore focus to it when the dialog closes — per WCAG 2.1 §3.2.2.
+const dialogFocusReturn = new WeakMap();
+
+function openDialog(dialog, triggerElement) {
+  if (!dialog) return;
+  dialogFocusReturn.set(dialog, triggerElement || document.activeElement);
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+}
+
+function closeDialog(dialog) {
+  if (dialog && dialog.open) {
+    dialog.close();
   }
 }
 
@@ -359,8 +433,13 @@ function setupDialogBackdropDismiss() {
   [el.settingsDialog, el.compareDialog].forEach(dialog => {
     if (!dialog) return;
     dialog.addEventListener('click', (e) => {
-      if (e.target === dialog) {
-        dialog.close();
+      if (e.target === dialog) closeDialog(dialog);
+    });
+    // Restore focus when dialog is closed via Escape key
+    dialog.addEventListener('close', () => {
+      const returnEl = dialogFocusReturn.get(dialog);
+      if (returnEl && typeof returnEl.focus === 'function') {
+        requestAnimationFrame(() => returnEl.focus());
       }
     });
   });
@@ -409,9 +488,9 @@ function setupEventListeners() {
     el.resolutionSelect.value = state.resolution;
     if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
     el.promptInput.value = state.prompt;
-    el.settingsDialog.showModal();
+    openDialog(el.settingsDialog, el.openSettingsBtn);
   });
-  el.closeSettingsBtn.addEventListener('click', () => el.settingsDialog.close());
+  el.closeSettingsBtn.addEventListener('click', () => closeDialog(el.settingsDialog));
   el.resetPromptBtn.addEventListener('click', () => { el.promptInput.value = DEFAULT_PROMPT; });
   el.saveSettingsBtn.addEventListener('click', () => {
     state.apiKey = el.apiKeyInput.value.trim().replace(/^["']+|["']+$/g, '');
@@ -428,12 +507,12 @@ function setupEventListeners() {
 
     updateModelLabel();
     updateApiKeyStatus();
-    el.settingsDialog.close();
+    closeDialog(el.settingsDialog);
     showToast('Preferences saved.', 'success', 2500);
   });
 
   // Compare Dialog
-  el.closeCompareBtn.addEventListener('click', () => el.compareDialog.close());
+  el.closeCompareBtn.addEventListener('click', () => closeDialog(el.compareDialog));
 
   // Window resize to sync slider dimensions
   window.addEventListener('resize', () => {
@@ -634,16 +713,32 @@ function renderQueue() {
 
   el.dropzoneContainer.style.display = 'none';
   el.queueSection.style.display = 'flex';
-  el.startBatchBtn.disabled = state.isProcessing;
+  // Only enable start if there are items not yet restored and we're not running
+  const hasPending = state.filesQueue.some(i => i.status !== 'restored');
+  el.startBatchBtn.disabled = state.isProcessing || !hasPending;
 
-  el.galleryGrid.innerHTML = '';
+  // ── Incremental DOM update ──────────────────────────────────────────────────
+  // 1. Build a set of current item IDs for fast lookup
+  const currentIds = new Set(state.filesQueue.map(i => i.id));
+
+  // 2. Remove cards that no longer exist in the queue
+  for (const existingCard of Array.from(el.galleryGrid.children)) {
+    if (!currentIds.has(existingCard.dataset.itemId)) {
+      existingCard.remove();
+    }
+  }
+
+  // 3. Append cards for new items (preserve existing ones in place to avoid flicker)
   state.filesQueue.forEach(item => {
-    const card = createCardElement(item);
-    el.galleryGrid.appendChild(card);
+    const existing = el.galleryGrid.querySelector(`[data-item-id="${item.id}"]`);
+    if (!existing) {
+      const card = createCardElement(item);
+      el.galleryGrid.appendChild(card);
+    }
   });
 
   const hasRestored = state.filesQueue.some(i => i.status === 'restored');
-  el.downloadZipBtn.style.display = hasRestored ? 'inline-block' : 'none';
+  el.downloadZipBtn.style.display = hasRestored ? 'inline-flex' : 'none';
 }
 
 function removeItemFromQueue(id) {
@@ -662,7 +757,7 @@ function removeItemFromQueue(id) {
 async function retrySingleImage(item) {
   if (state.isProcessing) return;
   if (!state.apiKey) {
-    el.settingsDialog.showModal();
+    openDialog(el.settingsDialog, el.openSettingsBtn);
     showToast('Please add your Gemini API Key in Preferences to continue.', 'warning');
     return;
   }
@@ -700,7 +795,7 @@ async function retrySingleImage(item) {
     }
     console.error(`Error retrying ${item.file.name}:`, err);
     item.status = 'error';
-    item.error = err.message || 'Restoration failed';
+    item.error = parseGeminiError(err);
   } finally {
     state.activeAbortController = null;
   }
@@ -717,34 +812,36 @@ function createCardElement(item) {
   const sizeKb = (item.file.size / 1024).toFixed(1);
   const displayUrl = item.restoredUrl || item.originalUrl;
   const statusLabel = item.status === 'restored' ? 'RESTORED' : item.status.toUpperCase();
+  const safeName    = escapeHtml(item.file.name);
 
   const metricsText = item.status === 'restored' && item.duration
-    ? `${item.restoredBlob ? (item.restoredBlob.size / (1024 * 1024)).toFixed(2) + ' MB' : `${sizeKb} KB`} • ${item.duration.toFixed(1)}s`
+    ? `${item.restoredBlob ? (item.restoredBlob.size / (1024 * 1024)).toFixed(2) + ' MB' : `${sizeKb} KB`} · ${item.duration.toFixed(1)}s`
     : item.status === 'error'
-    ? (item.error ? (item.error.length > 25 ? item.error.slice(0, 25) + '...' : item.error) : 'Failed')
+    ? escapeHtml(parseGeminiError({ message: item.error }))
     : `${sizeKb} KB`;
 
+  card.dataset.itemId = item.id;
   card.innerHTML = `
     <div class="card-preview">
-      <img src="${displayUrl}" alt="${item.file.name}" loading="lazy">
-      <span class="status-badge badge-${item.status}">${statusLabel}</span>
-      <button type="button" class="btn-card-remove" data-id="${item.id}" title="Remove image from queue" aria-label="Remove image">✕</button>
+      <img src="${displayUrl}" alt="${safeName}" loading="lazy" decoding="async">
+      <span class="status-badge badge-${item.status}" aria-label="Status: ${statusLabel}">${statusLabel}</span>
+      <button type="button" class="btn-card-remove" data-id="${escapeHtml(item.id)}" title="Remove ${safeName} from queue" aria-label="Remove ${safeName} from queue">✕</button>
     </div>
     <div class="card-info">
-      <span class="card-name" title="${item.file.name}">${item.file.name}</span>
+      <span class="card-name" title="${safeName}">${safeName}</span>
       <div class="card-metrics">
-        <span>${metricsText}</span>
-        <span>${item.status === 'restored' ? `${state.resolution} Studio` : item.status === 'error' ? 'Error' : 'Source'}</span>
+        <span class="${item.status === 'error' ? 'error-msg' : ''}" title="${escapeHtml(metricsText)}">${metricsText}</span>
+        <span>${item.status === 'restored' ? `${state.resolution} Studio` : item.status === 'error' ? 'Tap Retry' : 'Source'}</span>
       </div>
     </div>
     <div class="card-actions-bar">
       ${item.status === 'restored' ? `
-        <button type="button" class="btn-studio btn-studio-secondary compare-btn" data-id="${item.id}">Inspect Detail</button>
-        <a class="btn-studio btn-studio-primary" href="${item.restoredUrl}" download="${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png">Download</a>
+        <button type="button" class="btn-studio btn-studio-secondary compare-btn" data-id="${escapeHtml(item.id)}" aria-label="Inspect before/after detail for ${safeName}">Inspect Detail</button>
+        <a class="btn-studio btn-studio-primary" href="${item.restoredUrl}" download="${safeName.replace(/\.[^/.]+$/, '')}_restored.png" aria-label="Download restored ${safeName}">Download</a>
       ` : item.status === 'error' ? `
-        <button type="button" class="btn-studio btn-studio-secondary retry-btn" data-id="${item.id}">Retry Image</button>
+        <button type="button" class="btn-studio btn-studio-secondary retry-btn" data-id="${escapeHtml(item.id)}" aria-label="Retry restoration of ${safeName}">Retry Image</button>
       ` : `
-        <button type="button" class="btn-studio btn-studio-ghost" disabled>Pending Queue</button>
+        <button type="button" class="btn-studio btn-studio-ghost" disabled aria-label="${safeName} is pending in queue">Pending Queue</button>
       `}
     </div>
   `;
@@ -755,6 +852,17 @@ function createCardElement(item) {
       e.stopPropagation();
       removeItemFromQueue(item.id);
     });
+  }
+
+  // Mark skeleton as resolved once image loads
+  const previewImg = card.querySelector('.card-preview img');
+  const previewWrap = card.querySelector('.card-preview');
+  if (previewImg && previewWrap) {
+    if (previewImg.complete && previewImg.naturalWidth > 0) {
+      previewWrap.classList.add('img-loaded');
+    } else {
+      previewImg.addEventListener('load', () => previewWrap.classList.add('img-loaded'), { once: true });
+    }
   }
 
   const compareBtn = card.querySelector('.compare-btn');
@@ -779,9 +887,11 @@ function handleStopProcessing() {
   }
 }
 
+let batchStartTime = 0;
+
 async function startBatchProcessing() {
   if (!state.apiKey) {
-    el.settingsDialog.showModal();
+    openDialog(el.settingsDialog, el.openSettingsBtn);
     showToast('Please add your Gemini API Key in Preferences to continue.', 'warning');
     return;
   }
@@ -789,6 +899,7 @@ async function startBatchProcessing() {
   state.isProcessing = true;
   state.shouldStop = false;
   state.activeAbortController = null;
+  batchStartTime = performance.now();
   el.startBatchBtn.disabled = true;
   el.stopBatchBtn.style.display = 'inline-flex';
   el.progressSection.style.display = 'flex';
@@ -810,7 +921,7 @@ async function startBatchProcessing() {
     item.status = 'processing';
     updateCardStatus(item);
     const progressMsg = `Restoring [${i + 1} of ${total}] ${item.file.name}...`;
-    updateProgress(processed, total, progressMsg);
+    updateProgress(processed, total, progressMsg, batchStartTime);
     announceToScreenReader(progressMsg);
 
     const t0 = performance.now();
@@ -844,14 +955,14 @@ async function startBatchProcessing() {
       }
       console.error(`Error restoring ${item.file.name}:`, err);
       item.status = 'error';
-      item.error = err.message || 'Restoration failed';
+      item.error = parseGeminiError(err);
     } finally {
       state.activeAbortController = null;
     }
 
     processed++;
     updateCardStatus(item);
-    updateProgress(processed, total, `Finished ${item.file.name}`);
+    updateProgress(processed, total, `Finished ${item.file.name}`, batchStartTime);
 
     if (state.shouldStop) break;
 
@@ -866,7 +977,8 @@ async function startBatchProcessing() {
   }
 
   state.isProcessing = false;
-  el.startBatchBtn.disabled = false;
+  const hasPending = state.filesQueue.some(i => i.status !== 'restored');
+  el.startBatchBtn.disabled = !hasPending;
   el.stopBatchBtn.style.display = 'none';
   const doneMsg = state.shouldStop ? 'Processing stopped.' : 'All restorations complete ✓';
   el.progressText.textContent = doneMsg;
@@ -879,9 +991,22 @@ async function startBatchProcessing() {
   renderQueue(); // refresh ZIP button visibility
 }
 
-function updateProgress(current, total, text) {
+function updateProgress(current, total, text, startTime) {
   const pct = Math.round((current / total) * 100);
-  el.progressPercent.textContent = `${pct}% (${current}/${total})`;
+  let etaSuffix = '';
+  if (startTime && current > 0 && current < total) {
+    const elapsed = (performance.now() - startTime) / 1000;
+    const avgSec = elapsed / current;
+    const remainingSec = avgSec * (total - current);
+    if (remainingSec > 4) {
+      const mins = Math.floor(remainingSec / 60);
+      const secs = Math.ceil(remainingSec % 60);
+      etaSuffix = mins > 0
+        ? ` · ETA ~${mins}m ${secs}s`
+        : ` · ETA ~${secs}s`;
+    }
+  }
+  el.progressPercent.textContent = `${pct}% (${current}/${total})${etaSuffix}`;
   el.progressBar.style.width = `${pct}%`;
   el.progressText.textContent = text;
 }
@@ -906,32 +1031,33 @@ function updateCardStatus(item) {
     const metricsDiv = card.querySelector('.card-metrics');
     if (metricsDiv) {
       metricsDiv.innerHTML = `
-        <span>${restoredSizeMb} • ${item.duration ? item.duration.toFixed(1) + 's' : ''}</span>
+        <span>${restoredSizeMb} · ${item.duration ? item.duration.toFixed(1) + 's' : ''}</span>
         <span>${state.resolution} Studio</span>
       `;
     }
 
     const actions = card.querySelector('.card-actions-bar');
     if (actions) {
+      const safeName = escapeHtml(item.file.name);
       actions.innerHTML = `
-        <button type="button" class="btn-studio btn-studio-secondary compare-btn" data-id="${item.id}">Inspect Detail</button>
-        <a class="btn-studio btn-studio-primary" href="${item.restoredUrl}" download="${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png">Download</a>
+        <button type="button" class="btn-studio btn-studio-secondary compare-btn" data-id="${escapeHtml(item.id)}" aria-label="Inspect detail for ${safeName}">Inspect Detail</button>
+        <a class="btn-studio btn-studio-primary" href="${item.restoredUrl}" download="${safeName.replace(/\.[^/.]+$/, '')}_restored.png" aria-label="Download ${safeName}">Download</a>
       `;
       actions.querySelector('.compare-btn').addEventListener('click', () => openCompareModal(item));
     }
   } else if (item.status === 'error') {
     const metricsDiv = card.querySelector('.card-metrics');
     if (metricsDiv) {
-      const errMsg = item.error || 'Failed';
+      const friendlyErr = escapeHtml(parseGeminiError({ message: item.error }));
       metricsDiv.innerHTML = `
-        <span class="error-msg" title="${errMsg}">${errMsg.length > 25 ? errMsg.slice(0, 25) + '...' : errMsg}</span>
-        <span>Retry Available</span>
+        <span class="error-msg" title="${friendlyErr}">${friendlyErr}</span>
+        <span>Tap Retry</span>
       `;
     }
     const actions = card.querySelector('.card-actions-bar');
     if (actions) {
       actions.innerHTML = `
-        <button type="button" class="btn-studio btn-studio-secondary retry-btn" data-id="${item.id}">Retry Image</button>
+        <button type="button" class="btn-studio btn-studio-secondary retry-btn" data-id="${escapeHtml(item.id)}">Retry Image</button>
       `;
       actions.querySelector('.retry-btn').addEventListener('click', () => retrySingleImage(item));
     }
@@ -998,14 +1124,18 @@ async function callGeminiImageRestoration(file, signal = null) {
       if (!response.ok) {
         let errMessage = `API Error ${response.status}`;
         try {
-          const errJson = await response.json();
-          if (errJson.error && errJson.error.message) {
-            errMessage = errJson.error.message;
+          const errText = await response.text();
+          try {
+            const errJson = JSON.parse(errText);
+            if (errJson?.error?.message) {
+              errMessage = errJson.error.message;
+            } else if (errText) {
+              errMessage += `: ${errText}`;
+            }
+          } catch (_) {
+            if (errText) errMessage += `: ${errText}`;
           }
-        } catch (_) {
-          const text = await response.text();
-          if (text) errMessage += `: ${text}`;
-        }
+        } catch (_) {}
 
         // Retry on 429 (Rate Limit) and 5xx (Server/Overload Error)
         const isTransient = response.status === 429 || (response.status >= 500 && response.status < 600);
@@ -1183,7 +1313,7 @@ function openCompareModal(item) {
   el.downloadRestoredBtn.href = item.restoredUrl;
   el.downloadRestoredBtn.download = `${item.file.name.replace(/\.[^/.]+$/, '')}_8K_restored.png`;
 
-  el.compareDialog.showModal();
+  openDialog(el.compareDialog);
 
   // Sync dimensions only after both images have loaded so the container
   // has settled into its final layout before the clip calculation runs.

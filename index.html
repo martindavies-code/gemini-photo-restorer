@@ -5,12 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atelier 8K — Forensic Photo Restoration & Upscaling</title>
   <meta name="description" content="Professional photo restoration studio powered by Gemini 3 Pro Image. Reconstructs missing textures, eliminates compression artifacts, and relights with studio softbox precision.">
+  <meta name="theme-color" content="#060709">
+  <meta name="robots" content="index, follow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self' https://generativelanguage.googleapis.com; worker-src 'none'; object-src 'none'; base-uri 'self';">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+  <!-- Noscript fallback -->
+  <noscript>
+    <div style="padding:2rem;text-align:center;font-family:sans-serif;background:#0f1219;color:#e4e8f0;">
+      <strong>Atelier 8K requires JavaScript to run.</strong><br>
+      Please enable JavaScript in your browser settings and reload the page.
+    </div>
+  </noscript>
   <!-- Skip-nav link (accessibility) -->
   <a href="#studioMain" class="skip-nav">Skip to main content</a>
   <!-- ARIA live region: screen readers announce processing updates silently -->
@@ -250,7 +260,7 @@
               <span id="apiKeyLiveStatus" class="api-key-live-status"></span>
             </div>
             <div class="api-key-field-wrap">
-              <input type="password" id="apiKeyInput" class="form-input" placeholder="AIza..." autocomplete="off" aria-describedby="apiKeyHint" spellcheck="false">
+              <input type="password" id="apiKeyInput" class="form-input" placeholder="AIza..." autocomplete="new-password" aria-describedby="apiKeyHint" spellcheck="false">
               <button type="button" class="btn-show-key" id="toggleApiKeyBtn" aria-label="Show API key" title="Toggle visibility">
                 <svg id="eyeIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>

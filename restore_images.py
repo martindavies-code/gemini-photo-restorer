@@ -11,11 +11,13 @@ import os
 import sys
 import json
 import time
+import math
+import struct
 import base64
 import mimetypes
 import argparse
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 # Load environment variables
 try:
@@ -42,7 +44,67 @@ Perform a forensic restoration and massive upscale of this image to 8K resolutio
 
 The final output must be a hyper-realistic, 8K resolution image. The aesthetic should match a RAW file taken with a high-end medium format camera (like a Phase One) and a prime lens at f/2.8.
 
-Do not alter the fundamental composition or the identity of the subject. Strictly avoid the "waxy," "plastic," or overly smooth look common in AI upscaling. Do not over-saturate colours. Do not introduce over-sharpening halos. Ensure facial features remain anatomically correct and true to the original."""
+Do not alter the fundamental composition or the identity of the subject. Strictly avoid the "waxy," "plastic," or overly smooth look common in AI upscaling. Do not over-saturate colours. Do not introduce over-sharpening halos. Ensure facial features remain anatomically correct and true to the original. Strictly preserve the original aspect ratio, framing, and physical geometry. Do NOT stretch, squash, crop, letterbox, pillarbox, pad, or alter the geometric perspective of the source image in any way."""
+
+SUPPORTED_ASPECT_RATIOS = [
+    ("1:1", 1.0),
+    ("4:3", 4.0 / 3.0),
+    ("3:4", 3.0 / 4.0),
+    ("3:2", 1.5),
+    ("2:3", 2.0 / 3.0),
+    ("16:9", 16.0 / 9.0),
+    ("9:16", 9.0 / 16.0),
+    ("5:4", 1.25),
+    ("4:5", 0.8),
+    ("21:9", 21.0 / 9.0),
+    ("4:1", 4.0),
+    ("1:4", 0.25),
+    ("8:1", 8.0),
+    ("1:8", 0.125),
+]
+
+def find_closest_aspect_ratio(width: int, height: int) -> str:
+    """Find the closest Gemini-supported aspect ratio using scale-invariant logarithmic difference."""
+    if width <= 0 or height <= 0:
+        return "1:1"
+    target = width / height
+    closest_label, _ = min(
+        SUPPORTED_ASPECT_RATIOS,
+        key=lambda item: abs(math.log(target) - math.log(item[1]))
+    )
+    return closest_label
+
+def get_image_dimensions(image_path: Path) -> Tuple[int, int]:
+    """Extract width and height from image headers using PIL, falling back to binary header parsing."""
+    try:
+        from PIL import Image
+        with Image.open(image_path) as img:
+            return img.size
+    except Exception:
+        pass
+
+    try:
+        with open(image_path, "rb") as f:
+            data = f.read(65536)
+        if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+            w, h = struct.unpack(">II", data[16:24])
+            return (w, h)
+        if data.startswith(b"\xff\xd8"):
+            idx = 2
+            while idx < len(data) - 9:
+                if data[idx] != 0xff:
+                    idx += 1
+                    continue
+                marker = data[idx + 1]
+                if marker in [0xc0, 0xc1, 0xc2, 0xc3]:
+                    h, w = struct.unpack(">HH", data[idx + 5:idx + 9])
+                    return (w, h)
+                length = struct.unpack(">H", data[idx + 2:idx + 4])[0]
+                idx += 2 + length
+    except Exception:
+        pass
+
+    return (0, 0)
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
@@ -190,8 +252,8 @@ def get_image_files(folder: Path) -> List[Path]:
     return images
 
 
-def restore_image(client, image_path: Path, output_path: Path, model_name: str = "gemini-3-pro-image", resolution: str = "4K") -> bool:
-    """Send image to Gemini for forensic restoration and upscale, then save to output_path."""
+def restore_image(client, image_path: Path, output_path: Path, model_name: str = "gemini-3-pro-image", resolution: str = "4K", aspect_ratio: str = "auto") -> bool:
+    """Send image to Gemini for forensic restoration and upscale, preserving exact native aspect ratio."""
     from google.genai import types
 
     mime_type, _ = mimetypes.guess_type(str(image_path))
@@ -209,6 +271,17 @@ def restore_image(client, image_path: Path, output_path: Path, model_name: str =
         print(f"    [!] Skipping empty or unreadable image (0 bytes): {image_path.name}")
         return False
 
+    # Automatically detect native dimensions to prevent stretching/squashing
+    if aspect_ratio == "auto":
+        w, h = get_image_dimensions(image_path)
+        if w > 0 and h > 0:
+            target_aspect_ratio = find_closest_aspect_ratio(w, h)
+            print(f"    [*] Source dimensions: {w}x{h} -> Matched aspect ratio: {target_aspect_ratio} (distortion-free)")
+        else:
+            target_aspect_ratio = "1:1"
+    else:
+        target_aspect_ratio = aspect_ratio
+
     temp_output_path = output_path.with_suffix(".tmp")
 
     try:
@@ -220,7 +293,10 @@ def restore_image(client, image_path: Path, output_path: Path, model_name: str =
                 contents=[RESTORATION_PROMPT, image_part],
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(image_size=resolution),
+                    image_config=types.ImageConfig(
+                        image_size=resolution,
+                        aspect_ratio=target_aspect_ratio
+                    ),
                 )
             )
 
@@ -302,11 +378,19 @@ def main():
     parser.add_argument("--force", action="store_true", help="Re-process images even if already in FULLSIZE")
     parser.add_argument("--model", type=str, default="gemini-3-pro-image", help="Gemini image model (default: gemini-3-pro-image)")
     parser.add_argument("-r", "--resolution", type=str, choices=["4K", "2K", "1K"], default="4K", help="Native output resolution (default: 4K)")
+    parser.add_argument(
+        "-a", "--aspect-ratio",
+        type=str,
+        default="auto",
+        choices=["auto", "1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "5:4", "4:5", "21:9", "4:1", "1:4", "8:1", "1:8"],
+        help="Target aspect ratio (default: 'auto' to preserve exact source dimensions without distortion)"
+    )
     args = parser.parse_args()
 
     print("\n" + "=" * 65)
     print("    ATELIER 8K — FORENSIC PHOTO RESTORATION STUDIO")
     print(f"    Model: {args.model} ({args.resolution} Studio Output)")
+    print(f"    Aspect Ratio Mode: {args.aspect_ratio}")
     print("=" * 65)
 
     api_key = get_gemini_api_key()
@@ -358,7 +442,7 @@ def main():
             print(f"    [*] Uploading to Gemini and performing forensic upscale...")
 
             t0 = time.time()
-            ok = restore_image(client, img_path, out_path, model_name=args.model, resolution=args.resolution)
+            ok = restore_image(client, img_path, out_path, model_name=args.model, resolution=args.resolution, aspect_ratio=args.aspect_ratio)
             elapsed = time.time() - t0
 
             if ok and out_path.exists():
