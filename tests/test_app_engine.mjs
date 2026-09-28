@@ -639,5 +639,84 @@ test('retryAllFailed resets only failed items to ready status', () => {
   assert.equal(queue.filter(i => i.status === 'restored').length, 2);
 });
 
+test('buildApiEndpoint constructs standard Gemini URL in apikey mode', () => {
+  function buildApiEndpoint(mockState) {
+    if (mockState.authMode === 'vertex') {
+      const project = (mockState.gcpProjectId || '').trim();
+      const region = mockState.gcpRegion || 'us-central1';
+      if (!project) throw new Error('GCP Project ID is required for Vertex AI mode. Set it in Preferences.');
+      return `https://${region}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/${region}/publishers/google/models/${encodeURIComponent(mockState.model)}:generateContent`;
+    }
+    return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mockState.model)}:generateContent?key=${encodeURIComponent(mockState.apiKey)}`;
+  }
+
+  const endpoint = buildApiEndpoint({
+    authMode: 'apikey',
+    apiKey: 'AIzaSyTest123',
+    model: 'gemini-3-pro-image'
+  });
+
+  assert.equal(endpoint, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:generateContent?key=AIzaSyTest123');
+});
+
+test('buildApiEndpoint constructs Vertex AI URL in vertex mode using GCP credits', () => {
+  function buildApiEndpoint(mockState) {
+    if (mockState.authMode === 'vertex') {
+      const project = (mockState.gcpProjectId || '').trim();
+      const region = mockState.gcpRegion || 'us-central1';
+      if (!project) throw new Error('GCP Project ID is required for Vertex AI mode. Set it in Preferences.');
+      return `https://${region}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/${region}/publishers/google/models/${encodeURIComponent(mockState.model)}:generateContent`;
+    }
+    return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mockState.model)}:generateContent?key=${encodeURIComponent(mockState.apiKey)}`;
+  }
+
+  // US Central
+  const ep1 = buildApiEndpoint({
+    authMode: 'vertex',
+    gcpProjectId: 'my-gcp-restorer-987',
+    gcpRegion: 'us-central1',
+    model: 'gemini-3-pro-image'
+  });
+  assert.equal(ep1, 'https://us-central1-aiplatform.googleapis.com/v1/projects/my-gcp-restorer-987/locations/us-central1/publishers/google/models/gemini-3-pro-image:generateContent');
+
+  // Europe London
+  const ep2 = buildApiEndpoint({
+    authMode: 'vertex',
+    gcpProjectId: 'london-project',
+    gcpRegion: 'europe-west2',
+    model: 'gemini-3.1-flash-image'
+  });
+  assert.equal(ep2, 'https://europe-west2-aiplatform.googleapis.com/v1/projects/london-project/locations/europe-west2/publishers/google/models/gemini-3.1-flash-image:generateContent');
+
+  // Throws if project ID is missing in vertex mode
+  assert.throws(() => {
+    buildApiEndpoint({
+      authMode: 'vertex',
+      gcpProjectId: '   ',
+      gcpRegion: 'us-central1',
+      model: 'gemini-3-pro-image'
+    });
+  }, /GCP Project ID is required/);
+});
+
+test('isAuthConfigured verifies credentials based on active mode', () => {
+  function isAuthConfigured(mockState) {
+    if (mockState.authMode === 'vertex') {
+      return Boolean(mockState.gcpProjectId && mockState.gcpProjectId.trim());
+    }
+    return Boolean(mockState.apiKey && mockState.apiKey.trim());
+  }
+
+  // API Key mode
+  assert.equal(isAuthConfigured({ authMode: 'apikey', apiKey: 'AIzaKey' }), true);
+  assert.equal(isAuthConfigured({ authMode: 'apikey', apiKey: '' }), false);
+  assert.equal(isAuthConfigured({ authMode: 'apikey', apiKey: '   ' }), false);
+
+  // Vertex AI mode
+  assert.equal(isAuthConfigured({ authMode: 'vertex', gcpProjectId: 'my-project-1' }), true);
+  assert.equal(isAuthConfigured({ authMode: 'vertex', gcpProjectId: '' }), false);
+  assert.equal(isAuthConfigured({ authMode: 'vertex', gcpProjectId: '   ' }), false);
+});
+
 
 

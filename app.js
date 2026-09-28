@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Atelier 8K - Forensic Photo Restoration & Upscaling
  * ===================================================
  * Client-Side Engine with File System Access API, Gemini 3 Pro Image Integration,
@@ -56,22 +56,54 @@ function announceToScreenReader(message) {
   requestAnimationFrame(() => { live.textContent = message; });
 }
 
-// ─── API Key Status Indicator ────────────────────────────────────────────────
+// ─── Authentication Status Indicator (API Key or Vertex AI GCP Credits) ─────
 function updateApiKeyStatus() {
-  const hasKey = Boolean(state.apiKey);
+  const isVertex = state.authMode === 'vertex';
+  const hasAuth = isVertex
+    ? Boolean(state.gcpProjectId && (state.vertexToken || state.gcpManualToken))
+    : Boolean(state.apiKey);
+
   const pill   = document.getElementById('apiKeyStatus');
   const text   = document.getElementById('apiKeyStatusText');
   const banner = document.getElementById('onboardingBanner');
   const liveStatus = document.getElementById('apiKeyLiveStatus');
 
   if (pill) {
-    pill.className = `api-key-pill ${hasKey ? 'api-key-ok' : 'api-key-missing'}`;
-    pill.title = hasKey ? 'API key configured — click to change' : 'No API key — click to add one';
-    pill.setAttribute('aria-label', hasKey ? 'API key is configured. Click to open preferences.' : 'No API key set. Click to open preferences.');
+    pill.className = `api-key-pill ${hasAuth ? 'api-key-ok' : 'api-key-missing'}`;
+    if (isVertex) {
+      pill.title = hasAuth ? `Vertex AI (${state.gcpProjectId}) — GCP Credits Active` : 'Vertex AI unconfigured — click to set up';
+      pill.setAttribute('aria-label', hasAuth ? 'Vertex AI configured with GCP credits. Click to open preferences.' : 'Vertex AI unconfigured. Click to open preferences.');
+    } else {
+      pill.title = hasAuth ? 'API key configured — click to change' : 'No API key — click to add one';
+      pill.setAttribute('aria-label', hasAuth ? 'API key is configured. Click to open preferences.' : 'No API key set. Click to open preferences.');
+    }
   }
-  if (text)       text.textContent = hasKey ? 'Key Connected' : 'No API Key';
-  if (banner)     banner.style.display = hasKey ? 'none' : 'flex';
-  if (liveStatus) liveStatus.textContent = hasKey ? 'Key saved' : '';
+  if (text) {
+    if (isVertex) {
+      text.textContent = hasAuth ? 'GCP Credits Active' : 'GCP Setup Needed';
+    } else {
+      text.textContent = hasAuth ? 'Key Connected' : 'No API Key';
+    }
+  }
+  if (banner) {
+    banner.style.display = (hasAuth || (isVertex && state.gcpProjectId)) ? 'none' : 'flex';
+  }
+  if (liveStatus) {
+    liveStatus.textContent = hasAuth ? (isVertex ? 'GCP Credits Active' : 'Key saved') : '';
+  }
+}
+
+function updateStartButtonState() {
+  if (!el.startBatchBtn) return;
+  const hasPending = state.filesQueue && state.filesQueue.some(i => i.status !== 'restored');
+  el.startBatchBtn.disabled = state.isProcessing || !hasPending;
+}
+
+function isAuthConfigured() {
+  if (state.authMode === 'vertex') {
+    return Boolean(state.gcpProjectId && state.gcpProjectId.trim());
+  }
+  return Boolean(state.apiKey && state.apiKey.trim());
 }
 
 
@@ -359,7 +391,16 @@ const state = {
   activeCompareItem: null,
   allocatedUrls: new Set(),
   rateLimitResetUntil: 0,
-  consecutiveRateLimits: 0
+  consecutiveRateLimits: 0,
+  // Vertex AI (OAuth mode)
+  authMode: localStorage.getItem('lumina_auth_mode') || 'apikey', // 'apikey' | 'vertex'
+  gcpProjectId: localStorage.getItem('lumina_gcp_project') || '',
+  gcpRegion: localStorage.getItem('lumina_gcp_region') || 'us-central1',
+  gcpCustomClientId: localStorage.getItem('lumina_gcp_client_id') || '',
+  gcpManualToken: localStorage.getItem('lumina_gcp_token') || '',
+  vertexToken: null,       // Current OAuth access token
+  vertexTokenExpiry: 0,    // Token expiry timestamp (ms)
+  vertexUserEmail: null    // Signed-in email for display
 };
 
 // DOM Elements
@@ -413,7 +454,19 @@ const el = {
   downloadRestoredBtn: document.getElementById('downloadRestoredBtn'),
   apiKeyStatus: document.getElementById('apiKeyStatus'),
   onboardingAddKeyBtn: document.getElementById('onboardingAddKeyBtn'),
-  dropzoneFilesBtn: document.getElementById('dropzoneFilesBtn')
+  dropzoneFilesBtn: document.getElementById('dropzoneFilesBtn'),
+  authTabApiKey: document.getElementById('authTabApiKey'),
+  authTabGoogle: document.getElementById('authTabGoogle'),
+  authPanelApiKey: document.getElementById('authPanelApiKey'),
+  authPanelVertex: document.getElementById('authPanelVertex'),
+  gcpProjectId: document.getElementById('gcpProjectId'),
+  gcpRegionSelect: document.getElementById('gcpRegionSelect'),
+  gcpClientIdInput: document.getElementById('gcpClientIdInput'),
+  gcpAccessTokenInput: document.getElementById('gcpAccessTokenInput'),
+  vertexAuthStatus: document.getElementById('vertexAuthStatus'),
+  vertexAuthStatusText: document.getElementById('vertexAuthStatusText'),
+  vertexSignInBtn: document.getElementById('vertexSignInBtn'),
+  vertexSignOutBtn: document.getElementById('vertexSignOutBtn')
 };
 
 // CRC-32 Lookup Table for standard ZIP compliance
@@ -522,10 +575,16 @@ function initApp() {
   if (el.resolutionSelect) el.resolutionSelect.value = state.resolution;
   if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
   if (el.promptInput) el.promptInput.value = state.prompt;
+  if (el.gcpProjectId) el.gcpProjectId.value = state.gcpProjectId;
+  if (el.gcpRegionSelect) el.gcpRegionSelect.value = state.gcpRegion;
+  if (el.gcpClientIdInput) el.gcpClientIdInput.value = state.gcpCustomClientId;
+  if (el.gcpAccessTokenInput) el.gcpAccessTokenInput.value = state.gcpManualToken;
+  switchAuthMode(state.authMode);
   updateModelLabel();
   updateWorkflowStep();
   updateApiKeyStatus();
   updateStartButtonState();
+  initGisTokenClient();
 
   // 4. API key show/hide toggle
   const toggleBtn = document.getElementById('toggleApiKeyBtn');
@@ -702,31 +761,81 @@ function setupEventListeners() {
   });
 
   // Preferences
+  if (el.authTabApiKey) {
+    el.authTabApiKey.addEventListener('click', () => switchAuthMode('apikey'));
+  }
+  if (el.authTabGoogle) {
+    el.authTabGoogle.addEventListener('click', () => switchAuthMode('vertex'));
+  }
+  if (el.vertexSignInBtn) {
+    el.vertexSignInBtn.addEventListener('click', async () => {
+      try {
+        el.vertexSignInBtn.disabled = true;
+        el.vertexSignInBtn.textContent = 'Connecting...';
+        await getVertexToken(true);
+        updateVertexAuthStatusUI();
+        updateApiKeyStatus();
+        showToast('Google account connected. GCP credits active.', 'success', 3500);
+      } catch (err) {
+        console.error('Google Sign-in error:', err);
+        showToast('Google sign-in: ' + (err.message || err), 'error', 6000);
+      } finally {
+        el.vertexSignInBtn.disabled = false;
+        updateVertexAuthStatusUI();
+      }
+    });
+  }
+  if (el.vertexSignOutBtn) {
+    el.vertexSignOutBtn.addEventListener('click', () => {
+      vertexSignOut();
+      updateApiKeyStatus();
+    });
+  }
+
   el.openSettingsBtn.addEventListener('click', () => {
     el.apiKeyInput.value = state.apiKey;
     el.modelSelect.value = state.model;
     el.resolutionSelect.value = state.resolution;
     if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
     el.promptInput.value = state.prompt;
+    if (el.gcpProjectId) el.gcpProjectId.value = state.gcpProjectId;
+    if (el.gcpRegionSelect) el.gcpRegionSelect.value = state.gcpRegion;
+    if (el.gcpClientIdInput) el.gcpClientIdInput.value = state.gcpCustomClientId;
+    if (el.gcpAccessTokenInput) el.gcpAccessTokenInput.value = state.gcpManualToken;
+    switchAuthMode(state.authMode);
     openDialog(el.settingsDialog, el.openSettingsBtn);
   });
   el.closeSettingsBtn.addEventListener('click', () => closeDialog(el.settingsDialog));
   el.resetPromptBtn.addEventListener('click', () => { el.promptInput.value = DEFAULT_PROMPT; });
   el.saveSettingsBtn.addEventListener('click', () => {
     const previousKey = state.apiKey;
+    const previousMode = state.authMode;
+    const previousProject = state.gcpProjectId;
+
     state.apiKey = sanitizeApiKey(el.apiKeyInput.value);
     state.model = el.modelSelect.value;
     state.resolution = el.resolutionSelect.value;
     state.aspectRatio = el.aspectRatioSelect ? el.aspectRatioSelect.value : 'auto';
     state.prompt = el.promptInput.value.trim() || DEFAULT_PROMPT;
 
-    // If the API key changed, clear any lingering rate-limit state so the new key
+    if (el.gcpProjectId) state.gcpProjectId = el.gcpProjectId.value.trim();
+    if (el.gcpRegionSelect) state.gcpRegion = el.gcpRegionSelect.value;
+    if (el.gcpClientIdInput) state.gcpCustomClientId = el.gcpClientIdInput.value.trim();
+    if (el.gcpAccessTokenInput) {
+      state.gcpManualToken = el.gcpAccessTokenInput.value.trim();
+      if (state.gcpManualToken) {
+        state.vertexToken = state.gcpManualToken;
+        state.vertexTokenExpiry = Date.now() + (3600 * 1000);
+      }
+    }
+
+    // If the API key or Vertex auth changed, clear any lingering rate-limit state so the new setup
     // gets a completely fresh start. Old cooldowns from a different project/account
-    // should never carry over to a newly entered key.
-    if (state.apiKey !== previousKey) {
+    // should never carry over to a newly entered key or project.
+    if (state.apiKey !== previousKey || state.authMode !== previousMode || state.gcpProjectId !== previousProject) {
       state.rateLimitResetUntil = 0;
       state.consecutiveRateLimits = 0;
-      console.info('[Settings] API key changed — rate-limit cooldown state cleared for fresh start.');
+      console.info('[Settings] Auth credentials changed — rate-limit cooldown state cleared for fresh start.');
     }
 
     localStorage.setItem('lumina_api_key', state.apiKey);
@@ -734,12 +843,19 @@ function setupEventListeners() {
     localStorage.setItem('lumina_res', state.resolution);
     localStorage.setItem('lumina_aspect', state.aspectRatio);
     localStorage.setItem('lumina_prompt', state.prompt);
+    localStorage.setItem('lumina_auth_mode', state.authMode);
+    localStorage.setItem('lumina_gcp_project', state.gcpProjectId);
+    localStorage.setItem('lumina_gcp_region', state.gcpRegion);
+    localStorage.setItem('lumina_gcp_client_id', state.gcpCustomClientId);
+    localStorage.setItem('lumina_gcp_token', state.gcpManualToken);
 
     updateModelLabel();
     updateApiKeyStatus();
     updateStartButtonState();
     closeDialog(el.settingsDialog);
-    showToast('Preferences saved.', 'success', 2500);
+    showToast(state.authMode === 'vertex'
+      ? 'Preferences saved (Vertex AI mode with GCP credits).'
+      : 'Preferences saved.', 'success', 2500);
   });
 
   // Compare Dialog
@@ -1065,9 +1181,11 @@ function removeItemFromQueue(id) {
 
 async function retrySingleImage(item) {
   if (state.isProcessing) return;
-  if (!state.apiKey) {
+  if (!isAuthConfigured()) {
     openDialog(el.settingsDialog, el.openSettingsBtn);
-    showToast('Please add your Gemini API Key in Preferences to continue.', 'warning');
+    showToast(state.authMode === 'vertex'
+      ? 'Please enter your GCP Project ID in Preferences to use Vertex AI.'
+      : 'Please add your Gemini API Key in Preferences to continue.', 'warning');
     return;
   }
 
@@ -1219,10 +1337,23 @@ function handleStopProcessing() {
 let batchStartTime = 0;
 
 async function startBatchProcessing() {
-  if (!state.apiKey) {
+  if (!isAuthConfigured()) {
     openDialog(el.settingsDialog, el.openSettingsBtn);
-    showToast('Please add your Gemini API Key in Preferences to continue.', 'warning');
+    showToast(state.authMode === 'vertex'
+      ? 'Please enter your GCP Project ID in Preferences to use Vertex AI.'
+      : 'Please add your Gemini API Key in Preferences to continue.', 'warning');
     return;
+  }
+
+  // For Vertex AI mode, ensure we have an active token or prompt sign-in before batch loop begins
+  if (state.authMode === 'vertex') {
+    try {
+      await getVertexToken();
+    } catch (err) {
+      openDialog(el.settingsDialog, el.openSettingsBtn);
+      showToast('Google authentication required: ' + (err.message || err), 'error', 6000);
+      return;
+    }
   }
 
   state.isProcessing = true;
@@ -1561,7 +1692,8 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
     resolvedAspectRatio = state.aspectRatio;
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(state.model)}:generateContent?key=${encodeURIComponent(state.apiKey)}`;
+  // Endpoint + headers built by auth module (supports both API key and Vertex AI OAuth)
+  const endpoint = buildApiEndpoint();
 
   const payload = {
     contents: [
@@ -1596,9 +1728,10 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
     }
 
     try {
+      const headers = await buildApiHeaders();
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
         signal: signal || undefined
       });
@@ -1621,6 +1754,14 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
             if (errText) errMessage += `: ${errText}`;
           }
         } catch (_) {}
+
+        // In Vertex AI mode, if 401 is received, try refreshing the OAuth token once
+        if (state.authMode === 'vertex' && response.status === 401 && attempt < maxRetries) {
+          console.warn('[Vertex AI] Token expired or invalid (401). Forcing token refresh and retrying...');
+          state.vertexToken = null;
+          state.vertexTokenExpiry = 0;
+          continue;
+        }
 
         // 1. Fatal unrecoverable errors (invalid key, forbidden, suspended)
         if (isFatalApiError(response.status, errJson, errText)) {
@@ -2008,4 +2149,225 @@ async function handleDownloadAllZip() {
     el.downloadZipBtn.disabled = false;
     el.downloadZipBtn.textContent = 'Download Restored ZIP';
   }
+}
+
+
+// ============================================================
+// VERTEX AI OAuth MODULE
+// Uses GCP free-trial credits via Google Identity Services or Direct Token.
+// Endpoint: aiplatform.googleapis.com (not generativelanguage)
+// Auth: OAuth2 Bearer token with cloud-platform scope
+// ============================================================
+
+// Default OAuth Client ID for Google Identity Services.
+// Users can also specify their own custom Web OAuth Client ID in Preferences.
+const OAUTH_CLIENT_ID = '668489071994-kud4nqqmsc9m14k0j0gs0ij5cr3rj8ma.apps.googleusercontent.com';
+
+let _tokenClient = null;
+let _pendingTokenResolve = null;
+let _pendingTokenReject = null;
+
+/**
+ * Initialise the GIS token client once GIS has loaded.
+ * Safe to call multiple times - reinitialises if client ID changes.
+ */
+function initGisTokenClient() {
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return;
+  const activeClientId = (state.gcpCustomClientId && state.gcpCustomClientId.trim()) || OAUTH_CLIENT_ID;
+
+  try {
+    _tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: activeClientId,
+      scope: 'https://www.googleapis.com/auth/cloud-platform openid email',
+      callback: (tokenResponse) => {
+        if (tokenResponse.error) {
+          const errMsg = tokenResponse.error_description || tokenResponse.error;
+          if (_pendingTokenReject) _pendingTokenReject(new Error(errMsg));
+          _pendingTokenReject = null;
+          _pendingTokenResolve = null;
+          return;
+        }
+        // Token valid for 1 hour (expires_in usually 3600 seconds)
+        state.vertexToken = tokenResponse.access_token;
+        const expiresInSec = parseInt(tokenResponse.expires_in, 10) || 3600;
+        state.vertexTokenExpiry = Date.now() + (expiresInSec * 1000) - 60000; // 1min safety buffer
+        if (_pendingTokenResolve) _pendingTokenResolve(tokenResponse.access_token);
+        _pendingTokenResolve = null;
+        _pendingTokenReject = null;
+
+        updateVertexAuthStatusUI();
+        updateApiKeyStatus();
+        fetchGoogleUserInfo(tokenResponse.access_token);
+      }
+    });
+  } catch (err) {
+    console.warn('[Vertex AI] Could not initialize GIS token client:', err);
+  }
+}
+
+/**
+ * Get a valid Vertex AI OAuth token.
+ * 1. Returns direct access token if entered manually.
+ * 2. Returns cached OAuth token if still valid.
+ * 3. Requests a fresh token from Google Identity Services.
+ */
+async function getVertexToken(forcePrompt = false) {
+  // If direct access token was pasted (e.g. from gcloud auth print-access-token), use it!
+  if (state.gcpManualToken && state.gcpManualToken.trim()) {
+    return state.gcpManualToken.trim();
+  }
+
+  // Return cached GIS token if still valid
+  if (!forcePrompt && state.vertexToken && Date.now() < state.vertexTokenExpiry) {
+    return state.vertexToken;
+  }
+
+  initGisTokenClient();
+  if (!_tokenClient) {
+    throw new Error('Google Identity Services not ready. Either sign in with Google or paste a token from "gcloud auth print-access-token" in Preferences.');
+  }
+
+  // Request a new token (prompts user consent/popup if needed)
+  return new Promise((resolve, reject) => {
+    _pendingTokenResolve = resolve;
+    _pendingTokenReject = reject;
+    try {
+      _tokenClient.requestAccessToken({ prompt: forcePrompt ? 'consent' : '' });
+    } catch (err) {
+      _pendingTokenResolve = null;
+      _pendingTokenReject = null;
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Fetch signed-in user's email for the UI status text.
+ */
+async function fetchGoogleUserInfo(token) {
+  try {
+    const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      state.vertexUserEmail = data.email || null;
+      updateVertexAuthStatusUI();
+    }
+  } catch (_) { /* non-critical display helper */ }
+}
+
+/**
+ * Update the Vertex auth panel UI to reflect current sign-in state.
+ */
+function updateVertexAuthStatusUI() {
+  const statusEl = document.getElementById('vertexAuthStatus');
+  const textEl = document.getElementById('vertexAuthStatusText');
+  const signInBtn = document.getElementById('vertexSignInBtn');
+  const signOutBtn = document.getElementById('vertexSignOutBtn');
+  if (!statusEl) return;
+
+  const hasManualToken = Boolean(state.gcpManualToken && state.gcpManualToken.trim());
+  const hasGisToken = Boolean(state.vertexToken && Date.now() < state.vertexTokenExpiry);
+  const isSignedIn = hasManualToken || hasGisToken;
+
+  statusEl.className = `vertex-auth-status ${isSignedIn ? 'vertex-auth-signed-in' : 'vertex-auth-signed-out'}`;
+  if (textEl) {
+    if (hasManualToken) {
+      textEl.textContent = 'Direct Token Connected';
+    } else if (hasGisToken) {
+      textEl.textContent = state.vertexUserEmail ? `Signed in (${state.vertexUserEmail})` : 'Google Account Connected';
+    } else {
+      textEl.textContent = 'Not signed in';
+    }
+  }
+  if (signInBtn) signInBtn.style.display = isSignedIn ? 'none' : 'inline-flex';
+  if (signOutBtn) signOutBtn.style.display = isSignedIn ? 'inline-flex' : 'none';
+}
+
+/**
+ * Sign the user out of Vertex AI mode.
+ */
+function vertexSignOut() {
+  if (state.vertexToken && typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+    try {
+      google.accounts.oauth2.revoke(state.vertexToken, () => {});
+    } catch (_) {}
+  }
+  state.vertexToken = null;
+  state.vertexTokenExpiry = 0;
+  state.vertexUserEmail = null;
+  state.gcpManualToken = '';
+  if (el.gcpAccessTokenInput) el.gcpAccessTokenInput.value = '';
+  localStorage.removeItem('lumina_gcp_token');
+  updateVertexAuthStatusUI();
+  updateApiKeyStatus();
+  showToast('Signed out of Vertex AI.', 'info', 2500);
+}
+
+/**
+ * Build the correct API endpoint URL based on current auth mode.
+ * - apikey mode: standard generativelanguage.googleapis.com with ?key=
+ * - vertex mode: Vertex AI aiplatform.googleapis.com with Bearer token
+ */
+function buildApiEndpoint() {
+  if (state.authMode === 'vertex') {
+    const project = (state.gcpProjectId || '').trim();
+    const region = state.gcpRegion || 'us-central1';
+    if (!project) throw new Error('GCP Project ID is required for Vertex AI mode. Set it in Preferences.');
+    return `https://${region}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/${region}/publishers/google/models/${encodeURIComponent(state.model)}:generateContent`;
+  }
+  // Default: Gemini API with API key
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(state.model)}:generateContent?key=${encodeURIComponent(state.apiKey)}`;
+}
+
+/**
+ * Build the fetch headers based on auth mode.
+ * Vertex AI needs a Bearer token; API key mode uses no auth header (key is in URL).
+ */
+async function buildApiHeaders() {
+  if (state.authMode === 'vertex') {
+    const token = await getVertexToken();
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    };
+  }
+  return { 'Content-Type': 'application/json' };
+}
+
+/**
+ * Toggle auth mode panels in the preferences dialog.
+ */
+function switchAuthMode(mode) {
+  const apiPanel = document.getElementById('authPanelApiKey');
+  const vertexPanel = document.getElementById('authPanelVertex');
+  const apiTab = document.getElementById('authTabApiKey');
+  const googleTab = document.getElementById('authTabGoogle');
+
+  if (apiPanel) apiPanel.style.display = mode === 'apikey' ? '' : 'none';
+  if (vertexPanel) vertexPanel.style.display = mode === 'vertex' ? '' : 'none';
+  if (apiTab) {
+    apiTab.classList.toggle('auth-tab-active', mode === 'apikey');
+    apiTab.setAttribute('aria-selected', String(mode === 'apikey'));
+  }
+  if (googleTab) {
+    googleTab.classList.toggle('auth-tab-active', mode === 'vertex');
+    googleTab.setAttribute('aria-selected', String(mode === 'vertex'));
+  }
+
+  state.authMode = mode;
+  if (mode === 'vertex') updateVertexAuthStatusUI();
+  updateApiKeyStatus();
+}
+
+// Export helpers for unit testing if running in Node.js
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    buildApiEndpoint,
+    buildApiHeaders,
+    isAuthConfigured,
+    switchAuthMode,
+    state
+  };
 }

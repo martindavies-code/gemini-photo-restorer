@@ -1609,6 +1609,154 @@ body {
 .form-helper a:hover { color: var(--amber-vivid); text-decoration: underline; }
 
 /* ─────────────────────────────────────────────────────────────────────
+   AUTHENTICATION MODE TABS & VERTEX AI
+   ───────────────────────────────────────────────────────────────────── */
+.auth-mode-group {
+  margin-bottom: var(--s3);
+}
+
+.auth-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  background: var(--bg-void);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-md);
+  padding: 4px;
+}
+
+.auth-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  padding: 9px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-fast);
+  white-space: nowrap;
+}
+
+.auth-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.auth-tab.auth-tab-active {
+  background: var(--bg-card);
+  color: var(--amber-vivid);
+  border-color: var(--border-accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.gcp-badge {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(52, 168, 83, 0.16);
+  border: 1px solid rgba(52, 168, 83, 0.4);
+  color: #34a853;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-left: 2px;
+}
+
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.form-label-subtle {
+  font-weight: 400;
+  font-size: var(--t-xxs);
+  color: var(--text-muted);
+}
+
+.vertex-auth-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-mid);
+  background: var(--bg-input);
+  transition: all var(--dur-fast);
+}
+
+.vertex-auth-text {
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vertex-auth-signed-in {
+  border-color: rgba(52, 168, 83, 0.4);
+  background: rgba(52, 168, 83, 0.08);
+}
+
+.vertex-auth-signed-in .vertex-auth-text {
+  color: #34a853;
+  font-weight: 600;
+}
+
+.vertex-auth-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-shrink: 0;
+}
+
+.btn-google-signin {
+  background: #ffffff;
+  color: #1f1f1f;
+  font-weight: 600;
+  font-size: var(--t-xs);
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid #dadce0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background var(--dur-fast), box-shadow var(--dur-fast);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
+.btn-google-signin:hover {
+  background: #f8f9fa;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.25);
+}
+
+.btn-studio-small {
+  padding: 4px 10px;
+  font-size: var(--t-xxs);
+}
+
+.gcp-credit-tip {
+  display: block;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(232, 144, 58, 0.07);
+  border: 1px solid rgba(232, 144, 58, 0.25);
+  color: var(--text-secondary);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    BADGE / RATIO
    ───────────────────────────────────────────────────────────────────── */
 .badge-ratio {

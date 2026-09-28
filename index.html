@@ -12,7 +12,7 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://martindavies-code.github.io/gemini-photo-restorer/">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23e8903a%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z%22/><circle cx=%2212%22 cy=%2213%22 r=%224%22/></svg>">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self' https://generativelanguage.googleapis.com; worker-src 'none'; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data: https://*.googleusercontent.com; connect-src 'self' https://generativelanguage.googleapis.com https://*.aiplatform.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; worker-src 'none'; object-src 'none'; base-uri 'self';">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -267,6 +267,22 @@
         </div>
 
         <div class="modal-body">
+          <!-- Auth Mode Toggle: API Key vs Google Vertex AI (GCP Credits) -->
+          <div class="auth-mode-group">
+            <div class="auth-mode-tabs" role="tablist">
+              <button type="button" class="auth-tab auth-tab-active" id="authTabApiKey" role="tab" aria-selected="true" data-mode="apikey">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" width="13" height="13" aria-hidden="true"><rect x="2" y="11" width="16" height="8" rx="2"/><path d="M6 11V7a6 6 0 0 1 12 0v4"/></svg>
+                API Key
+              </button>
+              <button type="button" class="auth-tab" id="authTabGoogle" role="tab" aria-selected="false" data-mode="vertex">
+                <svg viewBox="0 0 18 18" width="14" height="14" aria-hidden="true"><path d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2l2.44 1.87C15.36 13.38 16.51 11 16.51 8z" fill="#4285F4"/><path d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.44-1.86a5.8 5.8 0 0 1-2.86.8 5.27 5.27 0 0 1-5-3.47H1.44v1.93C2.76 14.78 5.68 17 8.98 17z" fill="#34A853"/><path d="M3.98 10.53a5.37 5.37 0 0 1 0-3.06V5.54H1.44A9 9 0 0 0 .5 9c0 1.42.34 2.76.94 3.95l2.54-2.42z" fill="#FBBC05"/><path d="M8.98 3.58c1.32 0 2.5.45 3.44 1.34l2.28-2.27C13.06 1.06 11.2.25 8.98.25c-3.3 0-6.22 2.22-7.54 5.29l2.54 1.99a5.27 5.27 0 0 1 5-3.47" fill="#EA4335"/></svg>
+                Google Sign-in <span class="gcp-badge">Uses GCP Credits</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Panel: API Key (standard Gemini API) -->
+          <div id="authPanelApiKey" class="auth-panel auth-panel-visible">
           <div class="form-group">
             <div class="label-with-action">
               <label for="apiKeyInput" class="form-label">Gemini API Key</label>
@@ -283,6 +299,58 @@
             </div>
             <span id="apiKeyHint" class="form-helper">Get a free API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>. Stored only in your browser's localStorage.</span>
           </div>
+
+                    </div><!-- /authPanelApiKey -->
+
+          <!-- Panel: Vertex AI (Google Sign-in, uses GCP Credits) -->
+          <div id="authPanelVertex" class="auth-panel" style="display:none;">
+            <div class="form-group">
+              <label class="form-label" for="gcpProjectId">GCP Project ID</label>
+              <input type="text" id="gcpProjectId" class="form-input" placeholder="e.g. my-restorer-project-12345" autocomplete="off" spellcheck="false" aria-describedby="gcpProjectHint">
+              <span id="gcpProjectHint" class="form-helper">Your Google Cloud Project ID (not project name). Find it on the <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console Dashboard</a>.</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="gcpRegionSelect">Vertex AI Region</label>
+              <select id="gcpRegionSelect" class="form-select">
+                <option value="us-central1" selected>us-central1 (Iowa — Recommended)</option>
+                <option value="us-east4">us-east4 (N. Virginia)</option>
+                <option value="europe-west4">europe-west4 (Netherlands)</option>
+                <option value="europe-west2">europe-west2 (London)</option>
+                <option value="asia-northeast1">asia-northeast1 (Tokyo)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Google Account Authorization</label>
+              <div id="vertexAuthStatus" class="vertex-auth-status vertex-auth-signed-out">
+                <span id="vertexAuthStatusText" class="vertex-auth-text">Not signed in</span>
+                <div class="vertex-auth-actions">
+                  <button type="button" class="btn-studio btn-google-signin" id="vertexSignInBtn">
+                    <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true"><path d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2l2.44 1.87C15.36 13.38 16.51 11 16.51 8z" fill="#4285F4"/><path d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.44-1.86a5.8 5.8 0 0 1-2.86.8 5.27 5.27 0 0 1-5-3.47H1.44v1.93C2.76 14.78 5.68 17 8.98 17z" fill="#34A853"/><path d="M3.98 10.53a5.37 5.37 0 0 1 0-3.06V5.54H1.44A9 9 0 0 0 .5 9c0 1.42.34 2.76.94 3.95l2.54-2.42z" fill="#FBBC05"/><path d="M8.98 3.58c1.32 0 2.5.45 3.44 1.34l2.28-2.27C13.06 1.06 11.2.25 8.98.25c-3.3 0-6.22 2.22-7.54 5.29l2.54 1.99a5.27 5.27 0 0 1 5-3.47" fill="#EA4335"/></svg>
+                    Sign in with Google
+                  </button>
+                  <button type="button" class="btn-studio btn-studio-ghost btn-studio-small" id="vertexSignOutBtn" style="display:none;">Sign out</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="gcpAccessTokenInput">Direct Access Token <span class="form-label-subtle">(Optional alternative to Sign-in)</span></label>
+              <input type="password" id="gcpAccessTokenInput" class="form-input" placeholder="ya29.a0..." autocomplete="off" spellcheck="false" aria-describedby="gcpTokenHint">
+              <span id="gcpTokenHint" class="form-helper">Zero-setup alternative: Run <code>gcloud auth print-access-token</code> in your local terminal or Cloud Shell and paste the token here.</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="gcpClientIdInput">OAuth Client ID <span class="form-label-subtle">(Optional custom client)</span></label>
+              <input type="text" id="gcpClientIdInput" class="form-input" placeholder="Leave empty for default" autocomplete="off" spellcheck="false" aria-describedby="gcpClientIdHint">
+              <span id="gcpClientIdHint" class="form-helper">Optional custom Web OAuth 2.0 Client ID from GCP Credentials.</span>
+            </div>
+
+            <span class="form-helper gcp-credit-tip">
+              💡 <strong>GCP Free Trial Credits:</strong> Your ~£220 Google Cloud credits apply directly to Vertex AI requests, giving you hundreds of high-res image restorations without Google AI Studio rate limits.
+            </span>
+          </div><!-- /authPanelVertex -->
 
           <div class="form-grid-2">
             <div class="form-group">
@@ -340,6 +408,8 @@
     </dialog>
   </div>
 
+  <!-- Google Identity Services for Vertex AI OAuth -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="app.js"></script>
 </body>
 </html>
