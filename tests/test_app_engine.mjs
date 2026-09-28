@@ -24,6 +24,7 @@ const {
   sanitizeApiKey,
   escapeHtml,
   buildApiEndpoint,
+  buildApiHeaders,
   isAuthConfigured,
   GEMINI_ASPECT_RATIOS,
   state
@@ -681,4 +682,19 @@ test('Pipelined payload cache correctly buffers and hands off preloaded promises
   assert.equal(result.mimeType, 'image/png');
   assert.ok(result.base64Data.length > 0);
 });
+
+// ─── 25. Modern AQ Authentication Key and Header Propagation ──────────────────
+test('buildApiHeaders propagates modern AQ auth keys via x-goog-api-key header', async () => {
+  state.authMode = 'apikey';
+  state.apiKey = 'AQ.MockAuthKeyForTestingPurposesOnly_0123456789';
+
+  const headers = await buildApiHeaders();
+  assert.equal(headers['Content-Type'], 'application/json');
+  assert.equal(headers['x-goog-api-key'], 'AQ.MockAuthKeyForTestingPurposesOnly_0123456789');
+
+  // Verify sanitized properly
+  const sanitized = sanitizeApiKey('  AQ.MockAuthKeyForTestingPurposesOnly_0123456789  ');
+  assert.equal(sanitized, 'AQ.MockAuthKeyForTestingPurposesOnly_0123456789');
+});
+
 

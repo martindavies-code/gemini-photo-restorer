@@ -2544,7 +2544,11 @@ async function buildApiHeaders() {
       'Authorization': `Bearer ${token}`
     };
   }
-  return { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.apiKey) {
+    headers['x-goog-api-key'] = state.apiKey;
+  }
+  return headers;
 }
 
 /**
