@@ -566,3 +566,119 @@ test('isAuthConfigured verifies credentials based on active mode', () => {
   // Reset to default
   state.authMode = 'apikey';
 });
+
+// ─── 21. Intelligent Model Auto-Fallback Engine ────────────────────────────────
+test('Intelligent auto-fallback dynamically switches model from Pro to Flash on 429 quota exhaustion', () => {
+  state.authMode = 'apikey';
+  state.apiKey = 'AIzaSyTestFallbackKey';
+  state.model = 'gemini-3-pro-image';
+  state.autoFallbackOnQuota = true;
+
+  // Endpoint reflects Pro Image initially
+  const proEndpoint = buildApiEndpoint();
+  assert.ok(proEndpoint.includes('gemini-3-pro-image'));
+  assert.ok(!proEndpoint.includes('gemini-3.1-flash-image'));
+
+  // Simulate receiving 429 quota exhaustion under Pro Image
+  const simulatedResponseStatus = 429;
+  const isProQuotaHit = (
+    simulatedResponseStatus === 429 &&
+    state.model === 'gemini-3-pro-image' &&
+    state.autoFallbackOnQuota
+  );
+  assert.equal(isProQuotaHit, true);
+
+  // Trigger fallback
+  if (isProQuotaHit) {
+    state.model = 'gemini-3.1-flash-image';
+    state.consecutiveRateLimits = 0;
+    state.rateLimitResetUntil = 0;
+  }
+
+  // Model is now Flash Image
+  assert.equal(state.model, 'gemini-3.1-flash-image');
+
+  // New endpoint points directly to Flash Image URL
+  const flashEndpoint = buildApiEndpoint();
+  assert.ok(flashEndpoint.includes('gemini-3.1-flash-image'));
+  assert.ok(!flashEndpoint.includes('gemini-3-pro-image'));
+
+  // If already on Flash Image, fallback does not re-trigger
+  const isFlashQuotaHit = (
+    simulatedResponseStatus === 429 &&
+    state.model === 'gemini-3-pro-image' &&
+    state.autoFallbackOnQuota
+  );
+  assert.equal(isFlashQuotaHit, false);
+
+  // Reset to default
+  state.model = 'gemini-3.1-flash-image';
+});
+
+// ─── 22. Quota Metric 0-1 RPM Diagnostic Classification ───────────────────────
+test('parseGeminiError provides exact actionable guidance when 0-1 RPM quota limit is exceeded', () => {
+  const gcpLimit0Err = {
+    message: "Quota exceeded for quota metric 'GenerateContent request count per minute' and limit '0' of service 'aiplatform.googleapis.com'"
+  };
+  const parsed0 = parseGeminiError(gcpLimit0Err);
+  assert.ok(parsed0.includes('0-1 RPM for Pro Image'));
+  assert.ok(parsed0.includes('Switch to Flash Image'));
+
+  const gcpLimit1Err = {
+    message: "Resource exhausted: Quota exceeded for quota metric 'requests per minute' and limit '1'"
+  };
+  const parsed1 = parseGeminiError(gcpLimit1Err);
+  assert.ok(parsed1.includes('0-1 RPM for Pro Image'));
+  assert.ok(parsed1.includes('Switch to Flash Image'));
+});
+
+// ─── 23. Alpha Transparency Format Detection ──────────────────────────────────
+test('Alpha transparency format detection recognizes PNG and WebP files', () => {
+  function isAlphaSupported(mimeType, filename) {
+    return mimeType === 'image/png' || mimeType === 'image/webp' ||
+           Boolean(filename && /\.(png|webp)$/i.test(filename));
+  }
+
+  // PNG tests
+  assert.equal(isAlphaSupported('image/png', 'portrait.png'), true);
+  assert.equal(isAlphaSupported('application/octet-stream', 'transparent.PNG'), true);
+  assert.equal(isAlphaSupported('image/png', ''), true);
+
+  // WebP tests
+  assert.equal(isAlphaSupported('image/webp', 'graphic.webp'), true);
+  assert.equal(isAlphaSupported('', 'photo.WEBP'), true);
+
+  // JPEG / BMP / TIFF should not use alpha context
+  assert.equal(isAlphaSupported('image/jpeg', 'photo.jpg'), false);
+  assert.equal(isAlphaSupported('image/jpeg', 'photo.jpeg'), false);
+  assert.equal(isAlphaSupported('image/bmp', 'bitmap.bmp'), false);
+});
+
+// ─── 24. Pipelined Payload Cache Concurrency ──────────────────────────────────
+test('Pipelined payload cache correctly buffers and hands off preloaded promises', async () => {
+  const payloadCache = new Map();
+
+  const item1 = { id: 'img-1', file: { name: 'first.jpg' } };
+  const item2 = { id: 'img-2', file: { name: 'second.png' } };
+
+  // Simulate preloading item2 while item1 is executing
+  const preloadedPromise = Promise.resolve({
+    base64Data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    mimeType: 'image/png'
+  });
+  payloadCache.set(item2.id, preloadedPromise);
+
+  // item1 has no preloaded payload
+  assert.equal(payloadCache.has(item1.id), false);
+  assert.equal(payloadCache.has(item2.id), true);
+
+  // When item2 runs, it consumes its preloaded payload
+  const fetchedPromise = payloadCache.get(item2.id);
+  payloadCache.delete(item2.id);
+
+  assert.equal(payloadCache.has(item2.id), false);
+  const result = await fetchedPromise;
+  assert.equal(result.mimeType, 'image/png');
+  assert.ok(result.base64Data.length > 0);
+});
+

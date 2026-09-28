@@ -215,6 +215,8 @@ function parseGeminiError(err) {
     return 'Billing required for this model — switch to Gemini 3.1 Flash Image in Preferences or enable billing';
   if ((msg.includes('daily') || msg.includes('per day')) && (msg.includes('quota') || msg.includes('exhausted') || msg.includes('limit')))
     return 'Daily API quota exhausted — resets tomorrow at midnight PT';
+  if (msg.includes("limit '0'") || msg.includes("limit '1'") || msg.includes("limit 0") || msg.includes("limit 1"))
+    return 'GCP Project quota limit reached (0-1 RPM for Pro Image). Switch to Flash Image in Preferences for high quota.';
   if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted'))
     return isVertex
       ? 'Vertex AI rate limit hit — cooling down and retrying...'
@@ -440,6 +442,7 @@ const state = {
   allocatedUrls: new Set(),
   rateLimitResetUntil: 0,
   consecutiveRateLimits: 0,
+  autoFallbackOnQuota: safeStorage.getItem('lumina_auto_fallback') !== 'false',
   // Vertex AI (OAuth mode)
   authMode: safeStorage.getItem('lumina_auth_mode') || 'apikey', // 'apikey' | 'vertex'
   gcpProjectId: safeStorage.getItem('lumina_gcp_project') || '',
@@ -485,6 +488,7 @@ const el = {
   get saveSettingsBtn() { return getEl('saveSettingsBtn'); },
   get apiKeyInput() { return getEl('apiKeyInput'); },
   get modelSelect() { return getEl('modelSelect'); },
+  get autoFallbackCheckbox() { return getEl('autoFallbackCheckbox'); },
   get resolutionSelect() { return getEl('resolutionSelect'); },
   get aspectRatioSelect() { return getEl('aspectRatioSelect'); },
   get promptInput() { return getEl('promptInput'); },
@@ -852,6 +856,7 @@ function setupEventListeners() {
   el.openSettingsBtn.addEventListener('click', () => {
     el.apiKeyInput.value = state.apiKey;
     el.modelSelect.value = state.model;
+    if (el.autoFallbackCheckbox) el.autoFallbackCheckbox.checked = state.autoFallbackOnQuota;
     el.resolutionSelect.value = state.resolution;
     if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
     el.promptInput.value = state.prompt;
@@ -871,6 +876,10 @@ function setupEventListeners() {
 
     state.apiKey = sanitizeApiKey(el.apiKeyInput.value);
     state.model = el.modelSelect.value;
+    if (el.autoFallbackCheckbox) {
+      state.autoFallbackOnQuota = el.autoFallbackCheckbox.checked;
+      safeStorage.setItem('lumina_auto_fallback', state.autoFallbackOnQuota ? 'true' : 'false');
+    }
     state.resolution = el.resolutionSelect.value;
     state.aspectRatio = el.aspectRatioSelect ? el.aspectRatioSelect.value : 'auto';
     state.prompt = el.promptInput.value.trim() || DEFAULT_PROMPT;
@@ -922,6 +931,44 @@ function setupEventListeners() {
   window.addEventListener('resize', () => {
     if (el.compareDialog.open) {
       syncSliderDimensions();
+    }
+  });
+
+  // Global Studio Keyboard Shortcuts
+  window.addEventListener('keydown', (e) => {
+    const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+    const isEditingText = activeTag === 'input' || activeTag === 'textarea' || document.activeElement?.isContentEditable;
+
+    // Ctrl+Enter or Cmd+Enter: Start or Stop batch processing
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (state.isProcessing) {
+        handleStopProcessing();
+      } else {
+        const hasPending = state.filesQueue && state.filesQueue.some(i => i.status !== 'restored');
+        if (hasPending) {
+          startBatchProcessing();
+        }
+      }
+      return;
+    }
+
+    // Spacebar: Forensic comparison toggle when compare modal is open
+    if (e.key === ' ' && el.compareDialog?.open && !isEditingText) {
+      e.preventDefault();
+      const current = parseFloat(el.sliderContainer?.getAttribute('aria-valuenow') || '50');
+      const nextPos = current >= 50 ? 0 : 100;
+      setSliderPosition(nextPos);
+      return;
+    }
+
+    // Escape: Close dialogs cleanly
+    if (e.key === 'Escape') {
+      if (el.compareDialog?.open) {
+        closeDialog(el.compareDialog);
+      } else if (el.settingsDialog?.open) {
+        closeDialog(el.settingsDialog);
+      }
     }
   });
 }
@@ -1433,6 +1480,7 @@ async function startBatchProcessing() {
 
   const total = state.filesQueue.length;
   let processed = 0;
+  const payloadCache = new Map();
 
   for (let i = 0; i < total; i++) {
     if (state.shouldStop) break;
@@ -1470,10 +1518,24 @@ async function startBatchProcessing() {
       announceToScreenReader(`Rate limit cooldown. Waiting ${sec} seconds.`);
     };
 
+    // Pipeline: Pre-warm payload preparation for the next pending image in the background
+    const nextPendingItem = state.filesQueue.slice(i + 1).find(next => next.status !== 'restored');
+    if (nextPendingItem && !payloadCache.has(nextPendingItem.id)) {
+      payloadCache.set(nextPendingItem.id, prepareImagePayload(nextPendingItem.file));
+    }
+
+    const preloadedPayloadPromise = payloadCache.get(item.id) || null;
+    if (preloadedPayloadPromise) payloadCache.delete(item.id);
+
     const t0 = performance.now();
     state.activeAbortController = new AbortController();
     try {
-      const restoredBlob = await callGeminiImageRestoration(item.file, state.activeAbortController.signal, onCountdown);
+      const restoredBlob = await callGeminiImageRestoration(
+        item.file,
+        state.activeAbortController.signal,
+        onCountdown,
+        preloadedPayloadPromise
+      );
       item.restoredBlob = restoredBlob;
       if (item.restoredUrl) revokeManagedUrl(item.restoredUrl);
       item.restoredUrl = createManagedUrl(restoredBlob);
@@ -1525,6 +1587,7 @@ async function startBatchProcessing() {
     const spacingMs = (state.consecutiveRateLimits > 0) ? 3500 : 1200;
     await waitWithCountdown(spacingMs, null, state.activeAbortController?.signal);
   }
+  payloadCache.clear();
 
   state.isProcessing = false;
   const hasPending = state.filesQueue.some(i => i.status !== 'restored');
@@ -1698,10 +1761,12 @@ async function prepareImagePayload(file, signal = null) {
     const targetH = Math.max(1, Math.round(height * scale));
 
     try {
+      const isAlphaFormat = file.type === 'image/png' || file.type === 'image/webp' ||
+                            Boolean(file.name && /\.(png|webp)$/i.test(file.name));
       const canvas = document.createElement('canvas');
       canvas.width = targetW;
       canvas.height = targetH;
-      const ctx = canvas.getContext('2d', { alpha: false });
+      const ctx = canvas.getContext('2d', { alpha: isAlphaFormat });
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
@@ -1726,14 +1791,16 @@ async function prepareImagePayload(file, signal = null) {
         ctx.drawImage(img, 0, 0, targetW, targetH);
       }
 
+      const exportMime = isAlphaFormat ? (file.type || 'image/png') : 'image/jpeg';
+      const exportQuality = isAlphaFormat ? 0.95 : 0.94;
       const optimizedBlob = await new Promise((resolve) => {
-        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.94);
+        canvas.toBlob(blob => resolve(blob), exportMime, exportQuality);
       });
 
       if (optimizedBlob) {
         const base64Data = await fileToBase64(optimizedBlob);
-        console.info(`[Optimizer] Compressed ${file.name} from ${(file.size / 1024 / 1024).toFixed(1)}MB down to ${(optimizedBlob.size / 1024 / 1024).toFixed(2)}MB (${targetW}x${targetH})`);
-        return { base64Data, mimeType: 'image/jpeg' };
+        console.info(`[Optimizer] Compressed ${file.name} from ${(file.size / 1024 / 1024).toFixed(1)}MB down to ${(optimizedBlob.size / 1024 / 1024).toFixed(2)}MB (${targetW}x${targetH}) [${exportMime}]`);
+        return { base64Data, mimeType: exportMime };
       }
     } catch (err) {
       console.warn('[Optimizer] Canvas scaling failed, falling back to original file:', err);
@@ -1750,8 +1817,10 @@ async function prepareImagePayload(file, signal = null) {
 
 // Call Gemini 3 Pro Image API with Memory-Efficient Binary Decoding,
 // Smart Canvas Pre-Compression, and Resilient Rate-Limit Navigation
-async function callGeminiImageRestoration(file, signal = null, onCountdownTick = null) {
-  const { base64Data, mimeType } = await prepareImagePayload(file, signal);
+async function callGeminiImageRestoration(file, signal = null, onCountdownTick = null, preloadedPayloadPromise = null) {
+  const { base64Data, mimeType } = preloadedPayloadPromise
+    ? await preloadedPayloadPromise
+    : await prepareImagePayload(file, signal);
 
   // Resolve the aspect ratio to use for this specific image.
   // 'auto' = detect native dimensions from the file; explicit value = use as-is.
@@ -1764,7 +1833,7 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
   }
 
   // Endpoint + headers built by auth module (supports both API key and Vertex AI OAuth)
-  const endpoint = buildApiEndpoint();
+  let endpoint = buildApiEndpoint();
 
   const payload = {
     contents: [
@@ -1842,6 +1911,21 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
         // 2. Permanent daily quota exhaustion (resets at midnight PT, waiting seconds won't help)
         if (isDailyQuotaExceeded(errJson, errText)) {
           throw new Error(`Daily API quota exceeded for your project (resets at midnight PT). Please check Google AI Studio or use a different key.`);
+        }
+
+        // 2b. Intelligent Model Auto-Fallback (Pro Image 0-RPM quota exhaustion -> Flash Image 4K Studio)
+        if (response.status === 429 && state.model === 'gemini-3-pro-image' && state.autoFallbackOnQuota) {
+          console.warn(`[Auto-Fallback] gemini-3-pro-image hit 0-RPM quota exhaustion (${errMessage}). Automatically switching to gemini-3.1-flash-image (preserving 4K Studio resolution) to continue batch.`);
+          state.model = 'gemini-3.1-flash-image';
+          try { safeStorage.setItem('lumina_model', state.model); } catch (_) {}
+          updateModelLabel();
+          if (el.modelSelect) el.modelSelect.value = state.model;
+          showToast('Pro Image quota reached · Switched to Flash Image (4K Studio) to continue batch seamlessly.', 'info', 6000);
+          announceToScreenReader('Switched model to Gemini 3.1 Flash Image due to quota limit');
+          endpoint = buildApiEndpoint();
+          state.consecutiveRateLimits = 0;
+          state.rateLimitResetUntil = 0;
+          continue;
         }
 
         // 3. Transient rate-limit (429) or temporary server errors (5xx)
@@ -2233,12 +2317,19 @@ async function handleDownloadAllZip() {
     return;
   }
 
+  const originalHtml = el.downloadZipBtn.innerHTML;
   el.downloadZipBtn.disabled = true;
-  el.downloadZipBtn.textContent = 'Packaging ZIP...';
 
   try {
     const filesForZip = [];
-    for (const item of restoredItems) {
+    const total = restoredItems.length;
+
+    for (let i = 0; i < total; i++) {
+      const item = restoredItems[i];
+      el.downloadZipBtn.textContent = `Packaging (${i + 1}/${total})...`;
+      // Yield to layout/paint cycle so the button updates smoothly
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       const buffer = await item.restoredBlob.arrayBuffer();
       const outName = `${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png`;
       filesForZip.push({
@@ -2246,6 +2337,9 @@ async function handleDownloadAllZip() {
         data: new Uint8Array(buffer)
       });
     }
+
+    el.downloadZipBtn.textContent = 'Generating archive...';
+    await new Promise(resolve => setTimeout(resolve, 10));
 
     const zipBlob = createZipBlob(filesForZip);
     const zipUrl = createManagedUrl(zipBlob);
@@ -2264,7 +2358,7 @@ async function handleDownloadAllZip() {
     showToast('Could not package ZIP: ' + err.message, 'error');
   } finally {
     el.downloadZipBtn.disabled = false;
-    el.downloadZipBtn.textContent = 'Download Restored ZIP';
+    el.downloadZipBtn.innerHTML = originalHtml;
   }
 }
 
