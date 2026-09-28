@@ -283,7 +283,8 @@ const el = {
   sliderContainer: document.getElementById('sliderContainer'),
   downloadRestoredBtn: document.getElementById('downloadRestoredBtn'),
   apiKeyStatus: document.getElementById('apiKeyStatus'),
-  onboardingAddKeyBtn: document.getElementById('onboardingAddKeyBtn')
+  onboardingAddKeyBtn: document.getElementById('onboardingAddKeyBtn'),
+  dropzoneFilesBtn: document.getElementById('dropzoneFilesBtn')
 };
 
 // CRC-32 Lookup Table for standard ZIP compliance
@@ -365,8 +366,13 @@ async function getStoredDirectoryHandle() {
 }
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', async () => {
-  // Check for one-click setup via URL parameter (?key=...)
+function initApp() {
+  // 1. Setup all event listeners and UI controls immediately (synchronous)
+  setupEventListeners();
+  setupSplitSlider();
+  setupDialogBackdropDismiss();
+
+  // 2. Check for one-click setup via URL parameter (?key=...)
   try {
     const urlParams = new URLSearchParams(window.location.search);
     const paramKey = urlParams.get('key');
@@ -381,25 +387,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (_) {}
 
-  await tryFetchLocalConfig();
-
-  // Populate UI with saved settings
-  el.apiKeyInput.value = state.apiKey;
-  el.modelSelect.value = state.model;
-  el.resolutionSelect.value = state.resolution;
+  // 3. Populate UI with saved settings
+  if (el.apiKeyInput) el.apiKeyInput.value = state.apiKey;
+  if (el.modelSelect) el.modelSelect.value = state.model;
+  if (el.resolutionSelect) el.resolutionSelect.value = state.resolution;
   if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
-  el.promptInput.value = state.prompt;
+  if (el.promptInput) el.promptInput.value = state.prompt;
   updateModelLabel();
-
-  setupEventListeners();
-  setupSplitSlider();
-  setupDialogBackdropDismiss();
   updateWorkflowStep();
   updateApiKeyStatus();
+  updateStartButtonState();
 
-  // API key show/hide toggle
+  // 4. API key show/hide toggle
   const toggleBtn = document.getElementById('toggleApiKeyBtn');
-  if (toggleBtn) {
+  if (toggleBtn && el.apiKeyInput) {
     toggleBtn.addEventListener('click', () => {
       const input = el.apiKeyInput;
       const isHidden = input.type === 'password';
@@ -408,17 +409,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // Check if a previously selected directory handle exists in IndexedDB
-  const storedHandle = await getStoredDirectoryHandle();
-  if (storedHandle && el.reopenFolderBtn) {
-    el.reopenFolderBtn.style.display = 'inline-flex';
-    el.reopenFolderBtn.title = `Reopen previously chosen folder: ${storedHandle.name}`;
-    const span = el.reopenFolderBtn.querySelector('span');
-    if (span) span.textContent = `↺ Reopen ${storedHandle.name}`;
-  }
+  // 5. Restore saved folder handle in background
+  getStoredDirectoryHandle().then(storedHandle => {
+    if (storedHandle && el.reopenFolderBtn) {
+      el.reopenFolderBtn.style.display = 'inline-flex';
+      el.reopenFolderBtn.title = `Reopen previously chosen folder: ${storedHandle.name}`;
+      const span = el.reopenFolderBtn.querySelector('span');
+      if (span) span.textContent = `↺ Reopen ${storedHandle.name}`;
+    }
+  }).catch(() => {});
+
+  // 6. Query local config in background (only when running on localhost)
+  tryFetchLocalConfig().catch(() => {});
 
   window.addEventListener('beforeunload', cleanupAllUrls);
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 
 // Sync local API key from server if running through server.py
 async function tryFetchLocalConfig() {
@@ -479,15 +490,39 @@ function setupDialogBackdropDismiss() {
 // Setup Event Listeners
 function setupEventListeners() {
   // Folder & File Picking
-  el.pickFolderBtn.addEventListener('click', handleFolderPick);
-  if (el.reopenFolderBtn) {
-    el.reopenFolderBtn.addEventListener('click', reopenSavedFolder);
-  }
-  el.dropzoneFolderBtn.addEventListener('click', handleFolderPick);
-  el.pickFilesBtn.addEventListener('click', () => el.fallbackFilesInput.click());
+  if (el.pickFolderBtn) el.pickFolderBtn.addEventListener('click', handleFolderPick);
+  if (el.reopenFolderBtn) el.reopenFolderBtn.addEventListener('click', reopenSavedFolder);
+  if (el.dropzoneFolderBtn) el.dropzoneFolderBtn.addEventListener('click', handleFolderPick);
+  if (el.dropzoneFilesBtn) el.dropzoneFilesBtn.addEventListener('click', () => el.fallbackFilesInput && el.fallbackFilesInput.click());
+  if (el.pickFilesBtn) el.pickFilesBtn.addEventListener('click', () => el.fallbackFilesInput && el.fallbackFilesInput.click());
 
-  el.fallbackFolderInput.addEventListener('change', (e) => handleFallbackInput(e.target.files));
-  el.fallbackFilesInput.addEventListener('change', (e) => handleFallbackInput(e.target.files));
+  // Clicking the dropzone card itself opens folder/file picker
+  if (el.dropzoneBox) {
+    el.dropzoneBox.addEventListener('click', (e) => {
+      if (e.target.closest('button') || e.target.closest('a')) return;
+      handleFolderPick();
+    });
+    el.dropzoneBox.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (e.target.closest('button')) return;
+        e.preventDefault();
+        handleFolderPick();
+      }
+    });
+  }
+
+  if (el.fallbackFolderInput) {
+    el.fallbackFolderInput.addEventListener('change', (e) => {
+      handleFallbackInput(e.target.files);
+      e.target.value = '';
+    });
+  }
+  if (el.fallbackFilesInput) {
+    el.fallbackFilesInput.addEventListener('change', (e) => {
+      handleFallbackInput(e.target.files);
+      e.target.value = '';
+    });
+  }
 
   // Onboarding & Header Key Triggers
   if (el.onboardingAddKeyBtn) {
@@ -570,6 +605,10 @@ function setupEventListeners() {
   });
 }
 
+function isMobileDevice() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
 async function loadDirectoryHandle(dirHandle) {
   state.dirHandle = dirHandle;
   await saveStoredDirectoryHandle(dirHandle);
@@ -581,27 +620,46 @@ async function loadDirectoryHandle(dirHandle) {
   el.currentFolderLabel.textContent = dirHandle.name;
   el.outputFolderLabel.innerHTML = `Outputs will save directly to <mark>${dirHandle.name}/FULLSIZE/</mark>`;
 
-  state.fullsizeHandle = await dirHandle.getDirectoryHandle('FULLSIZE', { create: true });
+  // Attempt to prepare FULLSIZE folder, gracefully falling back if read-only
+  try {
+    state.fullsizeHandle = await dirHandle.getDirectoryHandle('FULLSIZE', { create: true });
+  } catch (e) {
+    console.warn('FULLSIZE folder handle could not be prepared upfront (will use ZIP/PNG download):', e);
+    state.fullsizeHandle = null;
+    el.outputFolderLabel.innerHTML = `Outputs available for <mark>instant ZIP / PNG download</mark>`;
+  }
 
   const files = [];
-  for await (const entry of dirHandle.values()) {
-    if (entry.kind === 'file') {
-      const file = await entry.getFile();
-      if (isImageFile(file.name)) {
-        files.push(file);
+  try {
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        const file = await entry.getFile();
+        if (isImageFile(file.name)) {
+          files.push(file);
+        }
       }
     }
+  } catch (err) {
+    console.error('Error scanning folder entries:', err);
+    showToast('Could not read directory contents: ' + err.message, 'error');
+    return;
+  }
+
+  if (files.length === 0) {
+    showToast(`No supported images found in "${dirHandle.name}". Please select a folder with JPG, PNG, or WebP files.`, 'warning', 5500);
+    return;
   }
 
   addFilesToQueue(files);
+  showToast(`✓ Loaded ${files.length} photo${files.length !== 1 ? 's' : ''} from "${dirHandle.name}".`, 'success', 3500);
 }
 
 async function reopenSavedFolder() {
   const storedHandle = await getStoredDirectoryHandle();
   if (!storedHandle) return;
   try {
-    if (!(await verifyHandlePermission(storedHandle, true))) {
-      showToast('Permission to access the previously chosen folder was denied. Please choose the folder again.', 'warning', 6000);
+    if (!(await verifyHandlePermission(storedHandle, false))) {
+      showToast('Permission to access previously chosen folder was not granted.', 'warning', 5000);
       return;
     }
     await loadDirectoryHandle(storedHandle);
@@ -611,31 +669,52 @@ async function reopenSavedFolder() {
   }
 }
 
-// Directory Picking via File System Access API
+// Directory Picking via File System Access API with automatic multi-browser fallbacks
 async function handleFolderPick() {
+  // Mobile browsers (iOS, Android) do not support directory picking via webkitdirectory or File System API
+  if (isMobileDevice()) {
+    if (el.fallbackFilesInput) el.fallbackFilesInput.click();
+    return;
+  }
+
   if ('showDirectoryPicker' in window) {
     try {
-      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-      if (!(await verifyHandlePermission(handle, true))) {
-        throw new Error('Permission to write to chosen folder was denied.');
-      }
+      // NOTE: Open with default read access. Do NOT pass mode: 'readwrite' upfront,
+      // as Chrome triggers security restrictions/cancellations on common folders like Downloads.
+      const handle = await window.showDirectoryPicker();
       await loadDirectoryHandle(handle);
+      return;
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        console.error('File system access error:', err);
-        el.fallbackFolderInput.click();
+      if (err.name === 'AbortError') {
+        // User deliberately cancelled the folder dialog
+        return;
       }
+      console.warn('showDirectoryPicker failed or restricted:', err);
+      showToast('Native folder picker could not be opened. Using file selector.', 'info', 4000);
+      try {
+        if (el.fallbackFolderInput) el.fallbackFolderInput.click();
+      } catch (_) {
+        if (el.fallbackFilesInput) el.fallbackFilesInput.click();
+      }
+      return;
     }
-  } else {
+  }
+
+  // Desktop browsers without showDirectoryPicker (Firefox, Safari)
+  if (el.fallbackFolderInput) {
     el.fallbackFolderInput.click();
+  } else if (el.fallbackFilesInput) {
+    el.fallbackFilesInput.click();
   }
 }
 
-async function verifyHandlePermission(handle, readWrite = true) {
+async function verifyHandlePermission(handle, readWrite = false) {
   const options = {};
   if (readWrite) options.mode = 'readwrite';
-  if ((await handle.queryPermission(options)) === 'granted') return true;
-  if ((await handle.requestPermission(options)) === 'granted') return true;
+  try {
+    if ((await handle.queryPermission(options)) === 'granted') return true;
+    if ((await handle.requestPermission(options)) === 'granted') return true;
+  } catch (_) {}
   return false;
 }
 
@@ -643,10 +722,13 @@ function handleFallbackInput(fileList) {
   if (!fileList || fileList.length === 0) return;
   const files = Array.from(fileList).filter(f => isImageFile(f.name));
   if (files.length > 0) {
-    const folderPath = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'Manual Selection';
+    const folderPath = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'Selected Photos';
     el.currentFolderLabel.textContent = folderPath;
     el.outputFolderLabel.textContent = 'Outputs available for immediate PNG or ZIP download';
     addFilesToQueue(files);
+    showToast(`✓ Loaded ${files.length} photo${files.length !== 1 ? 's' : ''}.`, 'success', 3500);
+  } else {
+    showToast('No supported images found in the selection. Please choose JPG, PNG, or WebP files.', 'warning', 5000);
   }
 }
 
@@ -658,6 +740,15 @@ async function handleFileDrop(e) {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item.kind === 'file') {
+        if ('getAsFileSystemHandle' in item) {
+          try {
+            const handle = await item.getAsFileSystemHandle();
+            if (handle && handle.kind === 'directory') {
+              await loadDirectoryHandle(handle);
+              return;
+            }
+          } catch (_) {}
+        }
         const file = item.getAsFile();
         if (file && isImageFile(file.name)) files.push(file);
       }
@@ -669,9 +760,12 @@ async function handleFileDrop(e) {
   }
 
   if (files.length > 0) {
-    el.currentFolderLabel.textContent = 'Imported Images';
-    el.outputFolderLabel.textContent = 'Outputs available for individual download';
+    el.currentFolderLabel.textContent = 'Imported Photos';
+    el.outputFolderLabel.textContent = 'Outputs available for immediate PNG or ZIP download';
     addFilesToQueue(files);
+    showToast(`✓ Loaded ${files.length} photo${files.length !== 1 ? 's' : ''}.`, 'success', 3500);
+  } else {
+    showToast('No supported images were found in the dropped item.', 'warning', 5000);
   }
 }
 

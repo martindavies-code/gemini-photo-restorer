@@ -138,9 +138,9 @@
           </button>
         </div>
 
-        <!-- Hidden Fallback Inputs -->
-        <input type="file" id="fallbackFolderInput" webkitdirectory directory multiple style="display: none;">
-        <input type="file" id="fallbackFilesInput" multiple accept="image/*" style="display: none;">
+        <!-- Hidden Fallback Inputs (sr-only instead of display:none for 100% reliable programmatic click()) -->
+        <input type="file" id="fallbackFolderInput" webkitdirectory directory multiple class="sr-only" aria-hidden="true" tabindex="-1">
+        <input type="file" id="fallbackFilesInput" multiple accept="image/*" class="sr-only" aria-hidden="true" tabindex="-1">
       </section>
 
       <!-- Active Progress Bar (Single source of truth) -->
@@ -156,7 +156,7 @@
 
       <!-- Compact Initial Dropzone (Clean, compact, no wasted hero space) -->
       <section class="upload-shelf" id="dropzoneContainer">
-        <div class="upload-drop-target" id="dropzoneBox">
+        <div class="upload-drop-target" id="dropzoneBox" role="button" tabindex="0" aria-label="Select photo folder or drop images here">
           <div class="drop-illustration" aria-hidden="true">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -170,6 +170,7 @@
           </div>
           <div class="drop-cta-group">
             <button type="button" class="btn-studio btn-studio-secondary" id="dropzoneFolderBtn">Choose Folder</button>
+            <button type="button" class="btn-studio btn-studio-ghost" id="dropzoneFilesBtn">Select Images</button>
             <span class="drop-or">or drag & drop images here</span>
           </div>
         </div>
