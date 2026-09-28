@@ -353,6 +353,18 @@ async function getStoredDirectoryHandle() {
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
+  // Check for one-click setup via URL parameter (?key=...)
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramKey = urlParams.get('key');
+    if (paramKey) {
+      state.apiKey = paramKey.trim().replace(/^["']+|["']+$/g, '');
+      localStorage.setItem('lumina_api_key', state.apiKey);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showToast('API key configured and saved securely.', 'success', 3500);
+    }
+  } catch (_) {}
+
   await tryFetchLocalConfig();
 
   // Populate UI with saved settings
