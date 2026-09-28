@@ -379,6 +379,8 @@ function openDialog(dialog, triggerElement) {
   dialogFocusReturn.set(dialog, triggerElement || document.activeElement);
   if (!dialog.open) {
     dialog.showModal();
+    const modalBody = dialog.querySelector('.modal-body');
+    if (modalBody) modalBody.scrollTop = 0;
   }
 }
 
