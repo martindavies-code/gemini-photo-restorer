@@ -1,0 +1,25 @@
+# Environment & Secrets (CRITICAL: Do NOT commit)
+.env
+*.env
+.env.*
+!.env.example
+
+# Configuration & Runtime Caches
+config.json
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Restored Outputs & Temporary Files
+FULLSIZE/
+dist/
+build/
+*.log
+.system_generated/
+.idea/
+.vscode/
