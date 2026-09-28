@@ -211,6 +211,8 @@ function parseGeminiError(err) {
   const msg = (err?.message || '').toLowerCase();
   const isVertex = typeof state !== 'undefined' && state.authMode === 'vertex';
 
+  if (msg.includes('billing') || msg.includes('free tier') || msg.includes('enable billing'))
+    return 'Billing required for this model — switch to Gemini 3.1 Flash Image in Preferences or enable billing';
   if ((msg.includes('daily') || msg.includes('per day')) && (msg.includes('quota') || msg.includes('exhausted') || msg.includes('limit')))
     return 'Daily API quota exhausted — resets tomorrow at midnight PT';
   if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted'))
@@ -424,7 +426,7 @@ const getEl = (id) => (typeof document !== 'undefined' ? document.getElementById
 // Application State
 const state = {
   apiKey: sanitizeApiKey(safeStorage.getItem('lumina_api_key')),
-  model: safeStorage.getItem('lumina_model') || 'gemini-3-pro-image',
+  model: safeStorage.getItem('lumina_model') || 'gemini-3.1-flash-image',
   resolution: safeStorage.getItem('lumina_res') || '4K',
   aspectRatio: safeStorage.getItem('lumina_aspect') || 'auto',
   prompt: safeStorage.getItem('lumina_prompt') || DEFAULT_PROMPT,
