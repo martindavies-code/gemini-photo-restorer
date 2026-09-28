@@ -7,6 +7,11 @@
   <meta name="description" content="Professional photo restoration studio powered by Gemini 3 Pro Image. Reconstructs missing textures, eliminates compression artifacts, and relights with studio softbox precision.">
   <meta name="theme-color" content="#060709">
   <meta name="robots" content="index, follow">
+  <meta property="og:title" content="Atelier 8K — Forensic Photo Restoration & Upscaling">
+  <meta property="og:description" content="Professional photo restoration studio powered by Gemini 3 Pro Image. Reconstructs missing textures, eliminates compression artifacts, and relights with studio softbox precision.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://martindavies-code.github.io/gemini-photo-restorer/">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23e8903a%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z%22/><circle cx=%2212%22 cy=%2213%22 r=%224%22/></svg>">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self' https://generativelanguage.googleapis.com; worker-src 'none'; object-src 'none'; base-uri 'self';">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -91,7 +96,7 @@
           <strong>First time? Add your Gemini API key to get started.</strong>
           <span>It's stored only in your browser — never sent anywhere except Google's API.</span>
         </div>
-        <button type="button" class="btn-studio btn-studio-primary" onclick="document.getElementById('openSettingsBtn').click()">Add API Key</button>
+        <button type="button" class="btn-studio btn-studio-primary" id="onboardingAddKeyBtn">Add API Key</button>
       </div>
       <!-- Session Bar: Consolidated directory & batch trigger -->
       <section class="session-bar">

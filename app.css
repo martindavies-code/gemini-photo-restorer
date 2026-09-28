@@ -235,8 +235,19 @@ body {
   border-radius: var(--r-xl);
   border: 1px solid;
   transition: all var(--dur-fast);
-  cursor: default;
+  cursor: pointer;
   white-space: nowrap;
+  user-select: none;
+}
+
+.api-key-pill:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.2);
+}
+
+.api-key-pill:focus-visible {
+  outline: 2px solid var(--amber-vivid);
+  outline-offset: 2px;
 }
 
 .api-key-missing {
@@ -1605,9 +1616,20 @@ body {
   .brand-spec    { display: none; }
 }
 
+@media (max-width: 640px) {
+  .engine-badge span:last-child {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 @media (max-width: 480px) {
   .gallery-grid  { grid-template-columns: 1fr 1fr; }
   .workflow-nav  { display: none; }
+  .engine-badge  { display: none; }
+  .header-right  { gap: var(--s2); }
 }
 
 /* ─────────────────────────────────────────────────────────────────────

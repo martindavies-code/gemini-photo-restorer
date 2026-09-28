@@ -405,4 +405,21 @@ test('Aspect ratio log-scale distance minimizes geometric distortion', () => {
   assert.equal(matchAspectRatio(1920, 1200), '3:2');
 });
 
+test('API key sanitization strips CLI flags, quotes, and whitespace', () => {
+  function sanitizeApiKey(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    return raw.trim()
+      .replace(/^-m\s+/i, '')
+      .replace(/^--key\s+/i, '')
+      .replace(/^["']+|["']+$/g, '')
+      .trim();
+  }
+
+  assert.equal(sanitizeApiKey('-m AQ.Ab8RN6K-hRJeEz'), 'AQ.Ab8RN6K-hRJeEz');
+  assert.equal(sanitizeApiKey('--key "AIzaSyD-12345"'), 'AIzaSyD-12345');
+  assert.equal(sanitizeApiKey("  'AQ.test_key'  "), 'AQ.test_key');
+  assert.equal(sanitizeApiKey(null), '');
+  assert.equal(sanitizeApiKey(undefined), '');
+});
+
 

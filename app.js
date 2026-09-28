@@ -66,7 +66,8 @@ function updateApiKeyStatus() {
 
   if (pill) {
     pill.className = `api-key-pill ${hasKey ? 'api-key-ok' : 'api-key-missing'}`;
-    pill.title = hasKey ? 'API key configured' : 'No API key — click Preferences to add one';
+    pill.title = hasKey ? 'API key configured — click to change' : 'No API key — click to add one';
+    pill.setAttribute('aria-label', hasKey ? 'API key is configured. Click to open preferences.' : 'No API key set. Click to open preferences.');
   }
   if (text)       text.textContent = hasKey ? '✓ API Key Set' : '⚠ No API Key';
   if (banner)     banner.style.display = hasKey ? 'none' : 'flex';
@@ -207,9 +208,19 @@ function closeDialog(dialog) {
   }
 }
 
+// Robust API key sanitization (strips extraneous CLI flags, quotes, whitespace)
+function sanitizeApiKey(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw.trim()
+    .replace(/^-m\s+/i, '')
+    .replace(/^--key\s+/i, '')
+    .replace(/^["']+|["']+$/g, '')
+    .trim();
+}
+
 // Application State
 const state = {
-  apiKey: (localStorage.getItem('lumina_api_key') || '').trim().replace(/^["']+|["']+$/g, ''),
+  apiKey: sanitizeApiKey(localStorage.getItem('lumina_api_key')),
   model: localStorage.getItem('lumina_model') || 'gemini-3-pro-image',
   resolution: localStorage.getItem('lumina_res') || '4K',
   aspectRatio: localStorage.getItem('lumina_aspect') || 'auto',
@@ -270,7 +281,9 @@ const el = {
   afterWrapper: document.getElementById('afterWrapper'),
   splitDivider: document.getElementById('splitDivider'),
   sliderContainer: document.getElementById('sliderContainer'),
-  downloadRestoredBtn: document.getElementById('downloadRestoredBtn')
+  downloadRestoredBtn: document.getElementById('downloadRestoredBtn'),
+  apiKeyStatus: document.getElementById('apiKeyStatus'),
+  onboardingAddKeyBtn: document.getElementById('onboardingAddKeyBtn')
 };
 
 // CRC-32 Lookup Table for standard ZIP compliance
@@ -358,10 +371,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const urlParams = new URLSearchParams(window.location.search);
     const paramKey = urlParams.get('key');
     if (paramKey) {
-      state.apiKey = paramKey.trim().replace(/^["']+|["']+$/g, '');
-      localStorage.setItem('lumina_api_key', state.apiKey);
-      window.history.replaceState({}, document.title, window.location.pathname);
-      showToast('API key configured and saved securely.', 'success', 3500);
+      const sanitized = sanitizeApiKey(paramKey);
+      if (sanitized) {
+        state.apiKey = sanitized;
+        localStorage.setItem('lumina_api_key', state.apiKey);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        showToast('API key configured and saved securely.', 'success', 3500);
+      }
     }
   } catch (_) {}
 
@@ -406,12 +422,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Sync local API key from server if running through server.py
 async function tryFetchLocalConfig() {
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (!isLocalHost) return;
+
   try {
     const res = await fetch('/api/config');
     if (res.ok) {
       const data = await res.json();
       if (data.apiKey && !state.apiKey) {
-        state.apiKey = data.apiKey.trim();
+        state.apiKey = sanitizeApiKey(data.apiKey);
         localStorage.setItem('lumina_api_key', state.apiKey);
         el.apiKeyInput.value = state.apiKey;
       }
@@ -470,6 +489,22 @@ function setupEventListeners() {
   el.fallbackFolderInput.addEventListener('change', (e) => handleFallbackInput(e.target.files));
   el.fallbackFilesInput.addEventListener('change', (e) => handleFallbackInput(e.target.files));
 
+  // Onboarding & Header Key Triggers
+  if (el.onboardingAddKeyBtn) {
+    el.onboardingAddKeyBtn.addEventListener('click', () => el.openSettingsBtn.click());
+  }
+  if (el.apiKeyStatus) {
+    el.apiKeyStatus.addEventListener('click', () => el.openSettingsBtn.click());
+    el.apiKeyStatus.setAttribute('role', 'button');
+    el.apiKeyStatus.setAttribute('tabindex', '0');
+    el.apiKeyStatus.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        el.openSettingsBtn.click();
+      }
+    });
+  }
+
   // Drag & Drop
   ['dragenter', 'dragover'].forEach(name => {
     el.dropzoneBox.addEventListener(name, (e) => {
@@ -505,7 +540,7 @@ function setupEventListeners() {
   el.closeSettingsBtn.addEventListener('click', () => closeDialog(el.settingsDialog));
   el.resetPromptBtn.addEventListener('click', () => { el.promptInput.value = DEFAULT_PROMPT; });
   el.saveSettingsBtn.addEventListener('click', () => {
-    state.apiKey = el.apiKeyInput.value.trim().replace(/^["']+|["']+$/g, '');
+    state.apiKey = sanitizeApiKey(el.apiKeyInput.value);
     state.model = el.modelSelect.value;
     state.resolution = el.resolutionSelect.value;
     state.aspectRatio = el.aspectRatioSelect ? el.aspectRatioSelect.value : 'auto';
@@ -519,6 +554,7 @@ function setupEventListeners() {
 
     updateModelLabel();
     updateApiKeyStatus();
+    updateStartButtonState();
     closeDialog(el.settingsDialog);
     showToast('Preferences saved.', 'success', 2500);
   });
