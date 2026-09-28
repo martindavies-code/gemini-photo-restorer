@@ -7,7 +7,7 @@
   <meta name="description" content="Professional photo restoration studio powered by Gemini 3 Pro Image. Reconstructs missing textures, eliminates compression artifacts, and relights with studio softbox precision.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -16,9 +16,16 @@
     <header class="studio-header">
       <div class="header-left">
         <div class="studio-brand">
-          <span class="brand-title">Atelier 8K</span>
-          <span class="brand-divider">/</span>
-          <span class="brand-spec">Forensic Photo Restoration</span>
+          <div class="brand-logo" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">Atelier 8K</span>
+            <span class="brand-spec">Forensic Photo Restoration</span>
+          </div>
         </div>
       </div>
 
@@ -157,7 +164,10 @@
         <div class="modal-header">
           <div>
             <h3 class="modal-title">Forensic Detail Inspection</h3>
-            <p class="modal-meta" id="compareFilename">source_image.jpg</p>
+            <div class="compare-header-meta">
+              <span class="modal-meta" id="compareFilename">source_image.jpg</span>
+              <span class="aspect-pill" id="compareAspectBadge">Auto Aspect Preserved</span>
+            </div>
           </div>
           <button type="button" class="btn-studio-close" id="closeCompareBtn" aria-label="Close dialog">✕</button>
         </div>
@@ -222,6 +232,24 @@
                 <option value="1K">1K Resolution</option>
               </select>
             </div>
+          </div>
+
+          <div class="form-group">
+            <label for="aspectRatioSelect" class="form-label">Aspect Ratio Mode</label>
+            <select id="aspectRatioSelect" class="form-select">
+              <option value="auto" selected>Auto (Preserve Exact Source Geometry — Zero Distortion)</option>
+              <option value="1:1">1:1 Square</option>
+              <option value="4:3">4:3 Standard Photo Landscape</option>
+              <option value="3:4">3:4 Standard Photo Portrait</option>
+              <option value="3:2">3:2 35mm DSLR Landscape</option>
+              <option value="2:3">2:3 35mm DSLR Portrait</option>
+              <option value="16:9">16:9 Widescreen Landscape</option>
+              <option value="9:16">9:16 Mobile Vertical Story</option>
+              <option value="5:4">5:4 Large Format Landscape</option>
+              <option value="4:5">4:5 Large Format Portrait</option>
+              <option value="21:9">21:9 Ultrawide Panoramic</option>
+            </select>
+            <span class="form-helper">When set to Auto, the source image's exact aspect ratio is detected and preserved so outputs are never stretched, squashed, or cropped.</span>
           </div>
 
           <div class="form-group">
