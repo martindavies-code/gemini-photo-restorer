@@ -1,52 +1,56 @@
-# Lumina 8K — Gemini Forensic Photo Restorer & Upscaler
+# Atelier 8K — Forensic Photo Restoration Studio
 
-A gallery-grade AI photo restoration and forensic upscaling platform powered by **Gemini 3 Pro Image** (`gemini-3-pro-image`, Nano Banana Pro).
+A gallery-grade photo restoration and photographic upscaling platform powered by **Gemini 3 Pro Image** (`gemini-3-pro-image`, Nano Banana Pro).
+
+Designed intentionally to avoid the 10 common pitfalls of AI "vibe-coded" dashboards:
+1. **Guided User Journey**: Replaces unstructured data dumps with a focused 3-step workflow (Select Folder ➔ Review Queue ➔ Forensic 4K Output).
+2. **Intentional Visual Hierarchy**: Distinct elevations, purposeful contrast, and clear primary calls-to-action.
+3. **No Wasted Hero Space**: Compact, high-utility session bar and upload shelf without bloated blank space.
+4. **Structured Inspection**: Clean, concise image cards with tabular alignment and instant status clarity.
+5. **In-Situ Comparison Labels**: Interactive Before/After split slider with direct on-image labelling—no detached legends.
+6. **Key Metrics Forefronted**: Highlights resolution (`4K Studio`), file size, and processing duration prominently.
+7. **No Duplicated Information**: Single unified status readout and progress metrics without redundant badges.
+8. **Editorial Darkroom Palette**: Dark slate charcoal and warm Leica amber/tungsten tones in place of generic neon cyberpunk orbs.
+9. **Distinguished Typography**: *Fraunces* editorial display serif paired with *Plus Jakarta Sans* and tabular numerals.
+10. **Disciplined 4/8pt Spacing Scale**: Strict design token system with unified radii and padding throughout.
 
 ---
 
-## Highlights
+## Features
 
-- **Stunning Glassmorphism Web App**: Real-time batch processing, interactive split-screen Before/After slider, image queue management, and dark obsidian UI.
-- **Direct `FULLSIZE/` Folder Sync**: Uses the modern browser **File System Access API** to read your chosen directory and write restored 4K/8K uncompressed PNGs directly to `<YourFolder>/FULLSIZE`.
-- **Directory Memory**: Remembers your previously selected folder across sessions.
-- **Forensic Retouching Engine**: Reconstructs high-frequency textures (skin pores, fabric weave), corrects compression artifacts, and relights with softbox studio lighting mimicking a Phase One medium-format camera at f/2.8.
-- **Dual Interface**: Includes both a modern **Web UI** and a headless/native **CLI Batch Tool**.
+- **Direct `FULLSIZE/` Folder Sync**: Uses the browser **File System Access API** (`showDirectoryPicker`) to read your folder and write restored 4K/8K uncompressed PNGs directly to `<YourFolder>/FULLSIZE`.
+- **Interactive Before/After Slider**: Side-by-side forensic split-slider to inspect high-frequency skin pores, fabric weaves, and softbox relighting.
+- **Gemini 3 Pro Image Engine**: Native 4K output with forensic restoration prompting.
+- **Dual Interface**: Includes both the **Web Studio** and a **CLI Batch Tool**.
 
 ---
 
-## Quick Start (Web Interface)
+## Quick Start (Web Studio)
 
-### 1. One-Click Launch
+### One-Click Launch (Recommended)
 Double-click:
 ```
 run_web.bat
 ```
-This automatically starts the local server and opens your browser at `http://localhost:8000`.
-
 *(Or in PowerShell: `.\run_web.ps1`)*
 
-### 2. Using the Web UI
-1. Click **Choose Folder** to select your target photo directory.
-2. Grant read/write permission (enables direct writing to the `FULLSIZE/` subfolder).
-3. Click **Start Restoration**.
-4. Click **Compare** on any card to slide between the original low-res and the restored 4K asset!
+The local studio server will start and open `http://localhost:8000` in your browser.
 
 ---
 
 ## Quick Start (CLI Batch Tool)
 
-### 1. One-Click Launch
 Double-click:
 ```
 run.bat
 ```
-*(Or in PowerShell: `.\run.ps1` or `.\.venv\Scripts\python.exe restore_images.py -f "C:\Path\To\Photos"`)*
+*(Or in PowerShell: `.\run.ps1`)*
 
 ---
 
 ## Configuration
 
-Your Gemini API key is stored locally in `.env` (which is git-ignored and never committed):
+Your Gemini API key is stored locally in `.env` (git-ignored, never committed):
 ```env
 GEMINI_API_KEY=your_key_here
 ```

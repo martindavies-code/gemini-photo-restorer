@@ -1,6 +1,6 @@
 /**
- * Lumina 8K - Gemini Forensic Photo Restorer & Upscaler
- * Client-side engine with File System Access API & direct Gemini 3 Pro Image integration
+ * Atelier 8K - Forensic Photo Restoration & Upscaling
+ * Client-Side Engine with File System Access API & Gemini 3 Pro Image Integration
  */
 
 const DEFAULT_PROMPT = `You are a Senior High-End Photo Retoucher and AI Restoration Specialist with 20 years of experience working for top-tier publications like National Geographic and Vogue. You possess expert knowledge of photogrammetry, texture reconstruction, and professional studio lighting setups.
@@ -27,7 +27,7 @@ const state = {
   prompt: localStorage.getItem('lumina_prompt') || DEFAULT_PROMPT,
   dirHandle: null,
   fullsizeHandle: null,
-  filesQueue: [], // Array of { id, file, originalUrl, restoredUrl, restoredBlob, status, error }
+  filesQueue: [], // Array of { id, file, originalUrl, restoredUrl, restoredBlob, status, duration, error }
   isProcessing: false,
   shouldStop: false,
   activeCompareItem: null
@@ -35,6 +35,9 @@ const state = {
 
 // DOM Elements
 const el = {
+  step1: document.getElementById('stepIndicator1'),
+  step2: document.getElementById('stepIndicator2'),
+  step3: document.getElementById('stepIndicator3'),
   pickFolderBtn: document.getElementById('pickFolderBtn'),
   pickFilesBtn: document.getElementById('pickFilesBtn'),
   fallbackFolderInput: document.getElementById('fallbackFolderInput'),
@@ -50,7 +53,6 @@ const el = {
   dropzoneContainer: document.getElementById('dropzoneContainer'),
   dropzoneBox: document.getElementById('dropzoneBox'),
   dropzoneFolderBtn: document.getElementById('dropzoneFolderBtn'),
-  dropzoneFilesBtn: document.getElementById('dropzoneFilesBtn'),
   queueSection: document.getElementById('queueSection'),
   queueCount: document.getElementById('queueCount'),
   galleryGrid: document.getElementById('galleryGrid'),
@@ -79,7 +81,6 @@ const el = {
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
-  // Try fetching API key from local backend if served locally
   await tryFetchLocalConfig();
 
   // Populate UI with saved settings
@@ -87,13 +88,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   el.modelSelect.value = state.model;
   el.resolutionSelect.value = state.resolution;
   el.promptInput.value = state.prompt;
-  el.activeModelLabel.textContent = state.model;
+  updateModelLabel();
 
   setupEventListeners();
   setupSplitSlider();
+  updateWorkflowStep();
 });
 
-// Try connecting to local Python server for key auto-population
+// Sync local API key from server if running through server.py
 async function tryFetchLocalConfig() {
   try {
     const res = await fetch('/api/config');
@@ -105,17 +107,35 @@ async function tryFetchLocalConfig() {
       }
     }
   } catch (e) {
-    // Standalone static mode, ignore
+    // Static mode, ignore
   }
 }
 
-// Event Listeners
+function updateModelLabel() {
+  const modelName = state.model === 'gemini-3-pro-image' ? 'Gemini 3 Pro Image' : 'Gemini 3.1 Flash Image';
+  el.activeModelLabel.textContent = `${modelName} (${state.resolution} Studio)`;
+}
+
+function updateWorkflowStep() {
+  el.step1.classList.remove('active');
+  el.step2.classList.remove('active');
+  el.step3.classList.remove('active');
+
+  if (state.isProcessing || state.filesQueue.some(i => i.status === 'restored')) {
+    el.step3.classList.add('active');
+  } else if (state.filesQueue.length > 0) {
+    el.step2.classList.add('active');
+  } else {
+    el.step1.classList.add('active');
+  }
+}
+
+// Setup Event Listeners
 function setupEventListeners() {
   // Folder & File Picking
   el.pickFolderBtn.addEventListener('click', handleFolderPick);
   el.dropzoneFolderBtn.addEventListener('click', handleFolderPick);
   el.pickFilesBtn.addEventListener('click', () => el.fallbackFilesInput.click());
-  el.dropzoneFilesBtn.addEventListener('click', () => el.fallbackFilesInput.click());
 
   el.fallbackFolderInput.addEventListener('change', (e) => handleFallbackInput(e.target.files));
   el.fallbackFilesInput.addEventListener('change', (e) => handleFallbackInput(e.target.files));
@@ -139,11 +159,11 @@ function setupEventListeners() {
   el.startBatchBtn.addEventListener('click', startBatchProcessing);
   el.stopBatchBtn.addEventListener('click', () => { state.shouldStop = true; });
 
-  // Clear & Tools
+  // Queue tools
   el.clearAllBtn.addEventListener('click', clearQueue);
   el.downloadZipBtn.addEventListener('click', handleDownloadAllZip);
 
-  // Settings
+  // Preferences
   el.openSettingsBtn.addEventListener('click', () => {
     el.apiKeyInput.value = state.apiKey;
     el.modelSelect.value = state.model;
@@ -164,7 +184,7 @@ function setupEventListeners() {
     localStorage.setItem('lumina_res', state.resolution);
     localStorage.setItem('lumina_prompt', state.prompt);
 
-    el.activeModelLabel.textContent = state.model;
+    updateModelLabel();
     el.settingsDialog.close();
   });
 
@@ -172,15 +192,15 @@ function setupEventListeners() {
   el.closeCompareBtn.addEventListener('click', () => el.compareDialog.close());
 }
 
-// Directory Picking via Modern File System Access API
+// Directory Picking via File System Access API
 async function handleFolderPick() {
   if ('showDirectoryPicker' in window) {
     try {
       state.dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
       el.currentFolderLabel.textContent = state.dirHandle.name;
-      el.outputFolderLabel.textContent = `${state.dirHandle.name}/FULLSIZE (Direct write)`;
+      el.outputFolderLabel.innerHTML = `Outputs will save directly to <mark>${state.dirHandle.name}/FULLSIZE/</mark>`;
 
-      // Get or create FULLSIZE subfolder handle
+      // Get or create FULLSIZE directory handle
       state.fullsizeHandle = await state.dirHandle.getDirectoryHandle('FULLSIZE', { create: true });
 
       const files = [];
@@ -209,9 +229,9 @@ function handleFallbackInput(fileList) {
   if (!fileList || fileList.length === 0) return;
   const files = Array.from(fileList).filter(f => isImageFile(f.name));
   if (files.length > 0) {
-    const folderPath = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'Selected Files';
+    const folderPath = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'Manual Selection';
     el.currentFolderLabel.textContent = folderPath;
-    el.outputFolderLabel.textContent = 'Outputs ready for individual or ZIP download';
+    el.outputFolderLabel.textContent = 'Outputs available for immediate PNG download';
     addFilesToQueue(files);
   }
 }
@@ -225,9 +245,7 @@ async function handleFileDrop(e) {
       const item = items[i];
       if (item.kind === 'file') {
         const file = item.getAsFile();
-        if (file && isImageFile(file.name)) {
-          files.push(file);
-        }
+        if (file && isImageFile(file.name)) files.push(file);
       }
     }
   } else if (e.dataTransfer.files) {
@@ -237,8 +255,8 @@ async function handleFileDrop(e) {
   }
 
   if (files.length > 0) {
-    el.currentFolderLabel.textContent = 'Dropped Images';
-    el.outputFolderLabel.textContent = 'Outputs ready for download';
+    el.currentFolderLabel.textContent = 'Imported Images';
+    el.outputFolderLabel.textContent = 'Outputs available for individual download';
     addFilesToQueue(files);
   }
 }
@@ -259,6 +277,7 @@ function addFilesToQueue(newFiles) {
         restoredUrl: null,
         restoredBlob: null,
         status: 'ready', // 'ready' | 'processing' | 'restored' | 'error'
+        duration: null,
         error: null
       };
       state.filesQueue.push(item);
@@ -266,6 +285,7 @@ function addFilesToQueue(newFiles) {
   });
 
   renderQueue();
+  updateWorkflowStep();
 }
 
 function clearQueue() {
@@ -275,14 +295,15 @@ function clearQueue() {
   });
   state.filesQueue = [];
   renderQueue();
+  updateWorkflowStep();
 }
 
 function renderQueue() {
   const count = state.filesQueue.length;
-  el.queueCount.textContent = count;
+  el.queueCount.textContent = `${count} ${count === 1 ? 'item' : 'items'}`;
 
   if (count === 0) {
-    el.dropzoneContainer.style.display = 'flex';
+    el.dropzoneContainer.style.display = 'block';
     el.queueSection.style.display = 'none';
     el.startBatchBtn.disabled = true;
     return;
@@ -304,30 +325,35 @@ function renderQueue() {
 
 function createCardElement(item) {
   const card = document.createElement('div');
-  card.className = `image-card status-${item.status}`;
+  card.className = `card-item status-${item.status}`;
   card.id = `card_${item.id}`;
 
   const sizeKb = (item.file.size / 1024).toFixed(1);
   const displayUrl = item.restoredUrl || item.originalUrl;
+  const statusLabel = item.status === 'restored' ? 'RESTORED' : item.status.toUpperCase();
+
+  const metricsText = item.status === 'restored' && item.duration
+    ? `${sizeKb} KB • ${item.duration.toFixed(1)}s`
+    : `${sizeKb} KB`;
 
   card.innerHTML = `
-    <div class="card-thumb-wrapper">
-      <img src="${displayUrl}" alt="${item.file.name}" class="card-thumb">
-      <span class="card-status-badge badge-${item.status}">${item.status.toUpperCase()}</span>
+    <div class="card-preview">
+      <img src="${displayUrl}" alt="${item.file.name}" loading="lazy">
+      <span class="status-badge badge-${item.status}">${statusLabel}</span>
     </div>
-    <div class="card-meta">
-      <span class="card-title" title="${item.file.name}">${item.file.name}</span>
-      <div class="card-details">
-        <span>${sizeKb} KB</span>
-        <span>${item.status === 'restored' ? '4K Ultra' : 'Source'}</span>
+    <div class="card-info">
+      <span class="card-name" title="${item.file.name}">${item.file.name}</span>
+      <div class="card-metrics">
+        <span>${metricsText}</span>
+        <span>${item.status === 'restored' ? `${state.resolution} Studio` : 'Source'}</span>
       </div>
     </div>
-    <div class="card-actions">
+    <div class="card-actions-bar">
       ${item.status === 'restored' ? `
-        <button type="button" class="btn btn-secondary compare-btn" data-id="${item.id}">Compare</button>
-        <a class="btn btn-primary" href="${item.restoredUrl}" download="${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png">Download</a>
+        <button type="button" class="btn-studio btn-studio-secondary compare-btn" data-id="${item.id}">Inspect Detail</button>
+        <a class="btn-studio btn-studio-primary" href="${item.restoredUrl}" download="${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png">Download</a>
       ` : `
-        <button type="button" class="btn btn-secondary" disabled>Pending</button>
+        <button type="button" class="btn-studio btn-studio-ghost" disabled>Pending Queue</button>
       `}
     </div>
   `;
@@ -340,11 +366,11 @@ function createCardElement(item) {
   return card;
 }
 
-// Batch Processing
+// Batch Execution
 async function startBatchProcessing() {
   if (!state.apiKey) {
     el.settingsDialog.showModal();
-    alert('Please enter your Gemini API Key in Settings to continue.');
+    alert('Please enter your Gemini API Key in Preferences to proceed.');
     return;
   }
 
@@ -353,14 +379,13 @@ async function startBatchProcessing() {
   el.startBatchBtn.disabled = true;
   el.stopBatchBtn.style.display = 'inline-flex';
   el.progressSection.style.display = 'flex';
+  updateWorkflowStep();
 
   const total = state.filesQueue.length;
   let processed = 0;
 
   for (let i = 0; i < total; i++) {
-    if (state.shouldStop) {
-      break;
-    }
+    if (state.shouldStop) break;
 
     const item = state.filesQueue[i];
     if (item.status === 'restored') {
@@ -371,15 +396,17 @@ async function startBatchProcessing() {
 
     item.status = 'processing';
     updateCardStatus(item);
-    updateProgress(processed, total, `Restoring [${i + 1}/${total}] ${item.file.name} via Gemini 3 Pro...`);
+    updateProgress(processed, total, `Restoring [${i + 1} of ${total}] ${item.file.name}...`);
 
+    const t0 = performance.now();
     try {
       const restoredBlob = await callGeminiImageRestoration(item.file);
       item.restoredBlob = restoredBlob;
       item.restoredUrl = URL.createObjectURL(restoredBlob);
       item.status = 'restored';
+      item.duration = (performance.now() - t0) / 1000;
 
-      // Save directly to FULLSIZE directory if directory handle exists
+      // Write directly to FULLSIZE if directory handle exists
       if (state.fullsizeHandle) {
         try {
           const outName = `${item.file.name.replace(/\.[^/.]+$/, '')}.png`;
@@ -388,32 +415,33 @@ async function startBatchProcessing() {
           await writable.write(restoredBlob);
           await writable.close();
         } catch (fsErr) {
-          console.error('Failed writing to local FULLSIZE directory:', fsErr);
+          console.error('Failed writing to FULLSIZE directory:', fsErr);
         }
       }
     } catch (err) {
-      console.error(`Error processing ${item.file.name}:`, err);
+      console.error(`Error restoring ${item.file.name}:`, err);
       item.status = 'error';
       item.error = err.message || 'Restoration failed';
     }
 
     processed++;
     updateCardStatus(item);
-    updateProgress(processed, total, `Completed ${item.file.name}`);
+    updateProgress(processed, total, `Finished ${item.file.name}`);
 
-    // Rate-limiting delay
-    await new Promise(r => setTimeout(r, 1200));
+    // Standard rate limit buffer
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   state.isProcessing = false;
   el.startBatchBtn.disabled = false;
   el.stopBatchBtn.style.display = 'none';
-  el.progressText.textContent = state.shouldStop ? 'Processing paused.' : 'All restorations complete!';
+  el.progressText.textContent = state.shouldStop ? 'Restoration paused.' : 'All restorations complete.';
+  updateWorkflowStep();
 }
 
 function updateProgress(current, total, text) {
   const pct = Math.round((current / total) * 100);
-  el.progressPercent.textContent = `${pct}%`;
+  el.progressPercent.textContent = `${pct}% (${current}/${total})`;
   el.progressBar.style.width = `${pct}%`;
   el.progressText.textContent = text;
 }
@@ -422,25 +450,32 @@ function updateCardStatus(item) {
   const card = document.getElementById(`card_${item.id}`);
   if (!card) return;
 
-  card.className = `image-card status-${item.status}`;
-  const badge = card.querySelector('.card-status-badge');
-  badge.className = `card-status-badge badge-${item.status}`;
-  badge.textContent = item.status.toUpperCase();
+  card.className = `card-item status-${item.status}`;
+  const badge = card.querySelector('.status-badge');
+  badge.className = `status-badge badge-${item.status}`;
+  badge.textContent = item.status === 'restored' ? 'RESTORED' : item.status.toUpperCase();
 
   if (item.status === 'restored') {
-    const thumb = card.querySelector('.card-thumb');
-    thumb.src = item.restoredUrl;
+    const previewImg = card.querySelector('.card-preview img');
+    previewImg.src = item.restoredUrl;
 
-    const actions = card.querySelector('.card-actions');
+    const sizeKb = (item.file.size / 1024).toFixed(1);
+    const metricsDiv = card.querySelector('.card-metrics');
+    metricsDiv.innerHTML = `
+      <span>${sizeKb} KB • ${item.duration ? item.duration.toFixed(1) + 's' : ''}</span>
+      <span>${state.resolution} Studio</span>
+    `;
+
+    const actions = card.querySelector('.card-actions-bar');
     actions.innerHTML = `
-      <button type="button" class="btn btn-secondary compare-btn" data-id="${item.id}">Compare</button>
-      <a class="btn btn-primary" href="${item.restoredUrl}" download="${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png">Download</a>
+      <button type="button" class="btn-studio btn-studio-secondary compare-btn" data-id="${item.id}">Inspect Detail</button>
+      <a class="btn-studio btn-studio-primary" href="${item.restoredUrl}" download="${item.file.name.replace(/\.[^/.]+$/, '')}_restored.png">Download</a>
     `;
     actions.querySelector('.compare-btn').addEventListener('click', () => openCompareModal(item));
   }
 }
 
-// Direct Call to Gemini Image Model
+// Call Gemini 3 Pro Image API
 async function callGeminiImageRestoration(file) {
   const base64Data = await fileToBase64(file);
   const mimeType = file.type || 'image/jpeg';
@@ -479,7 +514,7 @@ async function callGeminiImageRestoration(file) {
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`API ${response.status}: ${errText}`);
+    throw new Error(`API error ${response.status}: ${errText}`);
   }
 
   const json = await response.json();
@@ -513,7 +548,7 @@ function fileToBase64(file) {
   });
 }
 
-// Split Slider Interactive Comparison
+// Interactive In-Situ Comparison Slider
 function setupSplitSlider() {
   let isDragging = false;
 
@@ -557,9 +592,8 @@ function openCompareModal(item) {
   el.compareDialog.showModal();
 }
 
-// Download All as ZIP (Fallback if no directory handle)
+// Download All ZIP
 async function handleDownloadAllZip() {
-  alert('Downloading all restored images...');
   state.filesQueue.forEach(item => {
     if (item.status === 'restored' && item.restoredUrl) {
       const a = document.createElement('a');

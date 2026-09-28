@@ -49,7 +49,7 @@ def main():
 
     url = f"http://localhost:{PORT}"
     print("=" * 65)
-    print("    LUMINA 8K — GEMINI PHOTO RESTORER WEB INTERFACE")
+    print("    ATELIER 8K — FORENSIC PHOTO RESTORATION STUDIO")
     print(f"    Serving at: {url}")
     print("=" * 65)
     print("[+] Opening web interface in your default browser...")

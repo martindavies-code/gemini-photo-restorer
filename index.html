@@ -3,237 +3,240 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lumina 8K — Gemini Forensic Photo Restorer</title>
-  <meta name="description" content="AI forensic photo restoration and 8K/4K upscaler powered by Gemini 3 Pro Image (Nano Banana Pro).">
+  <title>Atelier 8K — Forensic Photo Restoration & Upscaling</title>
+  <meta name="description" content="Professional photo restoration studio powered by Gemini 3 Pro Image. Reconstructs missing textures, eliminates compression artifacts, and relights with studio softbox precision.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <!-- Ambient background glow elements -->
-  <div class="glow-orb orb-1" aria-hidden="true"></div>
-  <div class="glow-orb orb-2" aria-hidden="true"></div>
-  <div class="glow-orb orb-3" aria-hidden="true"></div>
-
-  <div class="app-layout">
-    <!-- Top Navigation Bar -->
-    <header class="app-header">
-      <div class="header-brand">
-        <div class="brand-logo">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-          </svg>
-        </div>
-        <div class="brand-info">
-          <h1>Lumina <span>8K</span></h1>
-          <p class="brand-tag">Gemini Pro Extended Restoration</p>
+  <div class="studio-app">
+    <!-- Studio Header -->
+    <header class="studio-header">
+      <div class="header-left">
+        <div class="studio-brand">
+          <span class="brand-title">Atelier 8K</span>
+          <span class="brand-divider">/</span>
+          <span class="brand-spec">Forensic Photo Restoration</span>
         </div>
       </div>
 
-      <div class="header-controls">
-        <div class="badge-status" id="modelBadge">
-          <span class="pulse-dot"></span>
-          <span id="activeModelLabel">gemini-3-pro-image</span>
+      <div class="header-right">
+        <div class="engine-badge" title="Active Model">
+          <span class="engine-dot"></span>
+          <span id="activeModelLabel">Gemini 3 Pro Image (4K Studio)</span>
         </div>
-
-        <button type="button" class="btn-icon" id="openSettingsBtn" title="Settings & API Key" aria-label="Settings">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button type="button" class="btn-studio-ghost" id="openSettingsBtn" aria-label="Open settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
+          <span>Preferences</span>
         </button>
       </div>
     </header>
 
-    <!-- Main Content Area -->
-    <main class="app-main">
-      <!-- Toolbar Banner -->
-      <section class="action-bar-glass">
-        <div class="action-group">
-          <button type="button" class="btn btn-primary" id="pickFolderBtn">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            </svg>
-            <span>Choose Folder</span>
-          </button>
+    <!-- Guided Workflow Bar (Step 1 -> 2 -> 3) -->
+    <nav class="workflow-nav" aria-label="Restoration Steps">
+      <div class="workflow-step active" id="stepIndicator1">
+        <span class="step-num">1</span>
+        <span class="step-text">Select Image Folder</span>
+      </div>
+      <span class="workflow-arrow" aria-hidden="true">→</span>
+      <div class="workflow-step" id="stepIndicator2">
+        <span class="step-num">2</span>
+        <span class="step-text">Queue & Inspection</span>
+      </div>
+      <span class="workflow-arrow" aria-hidden="true">→</span>
+      <div class="workflow-step" id="stepIndicator3">
+        <span class="step-num">3</span>
+        <span class="step-text">Forensic 4K Output</span>
+      </div>
+    </nav>
 
-          <button type="button" class="btn btn-secondary" id="pickFilesBtn">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-              <polyline points="21 15 16 10 5 21"></polyline>
-            </svg>
-            <span>Select Files</span>
-          </button>
-
-          <!-- Hidden inputs for fallback file picking -->
-          <input type="file" id="fallbackFolderInput" webkitdirectory directory multiple style="display: none;">
-          <input type="file" id="fallbackFilesInput" multiple accept="image/*" style="display: none;">
+    <!-- Main Workspace -->
+    <main class="studio-main">
+      <!-- Session Bar: Consolidated directory & batch trigger -->
+      <section class="session-bar">
+        <div class="session-source">
+          <div class="source-info">
+            <span class="meta-label">Selected Directory</span>
+            <div class="source-path" id="currentFolderLabel">No folder chosen</div>
+            <div class="source-dest" id="outputFolderLabel">Outputs will save directly to <mark>FULLSIZE/</mark></div>
+          </div>
+          <div class="source-actions">
+            <button type="button" class="btn-studio btn-studio-secondary" id="pickFolderBtn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span>Choose Folder</span>
+            </button>
+            <button type="button" class="btn-studio btn-studio-ghost" id="pickFilesBtn">
+              <span>Add Individual Files</span>
+            </button>
+          </div>
         </div>
 
-        <div class="folder-status-indicator" id="folderStatusBox">
-          <span class="label-tiny">Target Folder</span>
-          <span class="folder-name" id="currentFolderLabel">No folder chosen yet</span>
-          <span class="folder-target-sub" id="outputFolderLabel">Outputs will save to FULLSIZE/</span>
-        </div>
-
-        <div class="action-group right">
-          <button type="button" class="btn btn-accent" id="startBatchBtn" disabled>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="session-execution">
+          <button type="button" class="btn-studio btn-studio-primary" id="startBatchBtn" disabled>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
-            <span>Start Restoration</span>
+            <span>Start Forensic Restoration</span>
           </button>
-          
-          <button type="button" class="btn btn-secondary" id="stopBatchBtn" style="display: none;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="6" width="12" height="12"></rect>
-            </svg>
-            <span>Pause / Stop</span>
+          <button type="button" class="btn-studio btn-studio-danger" id="stopBatchBtn" style="display: none;">
+            <span>Pause Processing</span>
           </button>
         </div>
+
+        <!-- Hidden Fallback Inputs -->
+        <input type="file" id="fallbackFolderInput" webkitdirectory directory multiple style="display: none;">
+        <input type="file" id="fallbackFilesInput" multiple accept="image/*" style="display: none;">
       </section>
 
-      <!-- Global Progress Bar -->
-      <section class="progress-section" id="progressSection" style="display: none;">
-        <div class="progress-info-row">
-          <span class="progress-task-label" id="progressText">Processing queue...</span>
-          <span class="progress-percent" id="progressPercent">0%</span>
+      <!-- Active Progress Bar (Single source of truth) -->
+      <section class="progress-panel" id="progressSection" style="display: none;">
+        <div class="progress-header">
+          <span class="progress-status-text" id="progressText">Restoring queue...</span>
+          <span class="progress-ratio" id="progressPercent">0%</span>
         </div>
         <div class="progress-track">
-          <div class="progress-fill" id="progressBar" style="width: 0%;"></div>
+          <div class="progress-bar" id="progressBar" style="width: 0%;"></div>
         </div>
       </section>
 
-      <!-- Dropzone / Empty State -->
-      <section class="dropzone-container" id="dropzoneContainer">
-        <div class="dropzone-box" id="dropzoneBox">
-          <div class="dropzone-icon">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Compact Initial Dropzone (Clean, compact, no wasted hero space) -->
+      <section class="upload-shelf" id="dropzoneContainer">
+        <div class="upload-drop-target" id="dropzoneBox">
+          <div class="drop-illustration" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="17 8 12 3 7 8"></polyline>
               <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
           </div>
-          <h3>Select or Drop a Folder of Images</h3>
-          <p>Lumina will automatically restore every photo using Gemini 3 Pro Image at full 4K/8K definition and save them directly to a <code>FULLSIZE</code> folder.</p>
-          <div class="dropzone-actions">
-            <button type="button" class="btn btn-primary" id="dropzoneFolderBtn">Choose Folder</button>
-            <span class="or-separator">or</span>
-            <button type="button" class="btn btn-outline" id="dropzoneFilesBtn">Browse Images</button>
+          <div class="drop-copy">
+            <h2>Select your image folder to begin</h2>
+            <p>Every photo will be processed with National Geographic/Vogue grade retouching and saved automatically into a <code>FULLSIZE/</code> subfolder.</p>
+          </div>
+          <div class="drop-cta-group">
+            <button type="button" class="btn-studio btn-studio-secondary" id="dropzoneFolderBtn">Choose Folder</button>
+            <span class="drop-or">or drag & drop images here</span>
           </div>
         </div>
       </section>
 
-      <!-- Queue Gallery -->
-      <section class="queue-section" id="queueSection" style="display: none;">
-        <div class="queue-header">
-          <h2>Images in Queue (<span id="queueCount">0</span>)</h2>
-          <div class="queue-tools">
-            <button type="button" class="btn-text" id="clearAllBtn">Clear All</button>
-            <button type="button" class="btn-text" id="downloadZipBtn" style="display: none;">Download All as ZIP</button>
+      <!-- Queue & Gallery View -->
+      <section class="queue-panel" id="queueSection" style="display: none;">
+        <div class="queue-toolbar">
+          <div class="toolbar-left">
+            <h2 class="queue-title">Image Queue</h2>
+            <span class="queue-count-pill" id="queueCount">0 items</span>
+          </div>
+          <div class="toolbar-right">
+            <button type="button" class="btn-studio-text" id="clearAllBtn">Clear Queue</button>
+            <button type="button" class="btn-studio btn-studio-secondary" id="downloadZipBtn" style="display: none;">
+              Download Restored ZIP
+            </button>
           </div>
         </div>
 
         <div class="gallery-grid" id="galleryGrid">
-          <!-- Dynamically populated cards -->
+          <!-- Populated dynamically -->
         </div>
       </section>
     </main>
 
-    <!-- Floating Interactive Comparison Modal -->
-    <dialog class="compare-dialog" id="compareDialog" closedby="any">
-      <div class="dialog-content compare-dialog-content">
-        <div class="dialog-header">
-          <div class="dialog-title-group">
-            <h3>Forensic Inspection</h3>
-            <span class="compare-subtitle" id="compareFilename">filename.jpg</span>
+    <!-- Forensic Before/After Comparison Dialog -->
+    <dialog class="studio-dialog compare-modal" id="compareDialog" closedby="any">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h3 class="modal-title">Forensic Detail Inspection</h3>
+            <p class="modal-meta" id="compareFilename">source_image.jpg</p>
           </div>
-          <button type="button" class="btn-icon" id="closeCompareBtn" aria-label="Close Comparison">✕</button>
+          <button type="button" class="btn-studio-close" id="closeCompareBtn" aria-label="Close dialog">✕</button>
         </div>
 
-        <div class="split-slider-container" id="sliderContainer">
-          <!-- Before Image (Original) -->
-          <img id="beforeImg" class="split-img before-img" src="" alt="Original Image">
+        <!-- Interactive Split-Slider with In-Situ Labels -->
+        <div class="split-viewport" id="sliderContainer">
+          <img id="beforeImg" class="split-frame before-frame" src="" alt="Original Source">
           
-          <!-- After Image (Restored) -->
-          <div class="split-after-wrapper" id="afterWrapper">
-            <img id="afterImg" class="split-img after-img" src="" alt="Restored Image">
+          <div class="split-clip" id="afterWrapper">
+            <img id="afterImg" class="split-frame after-frame" src="" alt="Restored 4K Output">
           </div>
 
-          <!-- Divider Handle -->
-          <div class="split-divider" id="splitDivider">
-            <div class="split-handle">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <polyline points="15 18 9 12 15 6"></polyline>
-              </svg>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <polyline points="9 18 15 12 9 6"></polyline>
-              </svg>
+          <div class="split-line" id="splitDivider">
+            <div class="split-thumb" aria-hidden="true">
+              <span>↔</span>
             </div>
           </div>
 
-          <span class="split-tag tag-left">ORIGINAL</span>
-          <span class="split-tag tag-right">RESTORED 4K/8K</span>
+          <span class="in-situ-label label-before">Original (Low-Res Source)</span>
+          <span class="in-situ-label label-after">Restored (4K Studio Output)</span>
         </div>
 
-        <div class="dialog-footer">
-          <span class="hint-text">Drag slider to compare texture reconstruction, lighting, and detail resolution.</span>
-          <a class="btn btn-primary" id="downloadRestoredBtn" href="#" download>Download Fullsize PNG</a>
+        <div class="modal-footer">
+          <p class="inspection-hint">Slide horizontally to inspect texture reconstruction, skin pores, and softbox depth.</p>
+          <a class="btn-studio btn-studio-primary" id="downloadRestoredBtn" href="#" download>Download Fullsize PNG</a>
         </div>
       </div>
     </dialog>
 
-    <!-- Settings Dialog -->
-    <dialog class="settings-dialog" id="settingsDialog" closedby="any">
-      <div class="dialog-content">
-        <div class="dialog-header">
-          <h3>Settings & Configuration</h3>
-          <button type="button" class="btn-icon" id="closeSettingsBtn" aria-label="Close Settings">✕</button>
+    <!-- Studio Preferences Dialog -->
+    <dialog class="studio-dialog" id="settingsDialog" closedby="any">
+      <div class="modal-card preferences-card">
+        <div class="modal-header">
+          <div>
+            <h3 class="modal-title">Studio Preferences</h3>
+            <p class="modal-meta">Model parameters and credentials</p>
+          </div>
+          <button type="button" class="btn-studio-close" id="closeSettingsBtn" aria-label="Close preferences">✕</button>
         </div>
 
-        <div class="settings-body">
-          <div class="setting-field">
-            <label for="apiKeyInput">Gemini API Key</label>
-            <input type="password" id="apiKeyInput" placeholder="AQ... or AIza..." autocomplete="off">
-            <small>Key is stored securely in your browser's <code>localStorage</code> (or preloaded from local <code>.env</code>). Get a free key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</small>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="apiKeyInput" class="form-label">Gemini API Key</label>
+            <input type="password" id="apiKeyInput" class="form-input" placeholder="Enter key (stored only in your browser localStorage)" autocomplete="off">
+            <span class="form-helper">Get an API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>. Automatically synced with local <code>.env</code> when served locally.</span>
           </div>
 
-          <div class="setting-field">
-            <label for="modelSelect">AI Model</label>
-            <select id="modelSelect">
-              <option value="gemini-3-pro-image" selected>Gemini 3 Pro Image (Nano Banana Pro — Recommended)</option>
-              <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Nano Banana 2 — Faster)</option>
-            </select>
-          </div>
-
-          <div class="setting-field">
-            <label for="resolutionSelect">Output Resolution</label>
-            <select id="resolutionSelect">
-              <option value="4K" selected>4K Ultra (Highest native detail)</option>
-              <option value="2K">2K Resolution (High)</option>
-              <option value="1K">1K Resolution (Standard)</option>
-            </select>
-          </div>
-
-          <div class="setting-field">
-            <div class="field-label-row">
-              <label for="promptInput">Restoration Prompt</label>
-              <button type="button" class="btn-link" id="resetPromptBtn">Reset Default</button>
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label for="modelSelect" class="form-label">AI Restoration Model</label>
+              <select id="modelSelect" class="form-select">
+                <option value="gemini-3-pro-image" selected>Gemini 3 Pro Image (Nano Banana Pro)</option>
+                <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Nano Banana 2)</option>
+              </select>
             </div>
-            <textarea id="promptInput" rows="7"></textarea>
+
+            <div class="form-group">
+              <label for="resolutionSelect" class="form-label">Native Output Resolution</label>
+              <select id="resolutionSelect" class="form-select">
+                <option value="4K" selected>4K Studio (Highest Definition)</option>
+                <option value="2K">2K Resolution</option>
+                <option value="1K">1K Resolution</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="label-with-action">
+              <label for="promptInput" class="form-label">Forensic Prompt Specification</label>
+              <button type="button" class="btn-studio-text-subtle" id="resetPromptBtn">Reset Default</button>
+            </div>
+            <textarea id="promptInput" class="form-textarea" rows="6"></textarea>
           </div>
         </div>
 
-        <div class="dialog-footer">
-          <button type="button" class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
+        <div class="modal-footer">
+          <button type="button" class="btn-studio btn-studio-primary" id="saveSettingsBtn">Save Preferences</button>
         </div>
       </div>
     </dialog>
   </div>
 
-  <!-- App logic -->
   <script src="app.js"></script>
 </body>
 </html>
