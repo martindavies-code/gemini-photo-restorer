@@ -1459,10 +1459,14 @@ async function startBatchProcessing() {
     updateProgress(processed, total, progressMsg, batchStartTime);
     announceToScreenReader(progressMsg);
 
-    const onCountdown = (sec) => {
+    const onCountdown = (sec, totalSec, status, errMsg) => {
       item.status = 'cooldown';
       updateCardStatus(item, `Cooling down (${sec}s)...`);
-      updateProgress(processed, total, `Rate limit active · pacing request in ${sec}s (${item.file.name})...`, batchStartTime);
+      let detail = '';
+      if (state.model === 'gemini-3-pro-image') {
+        detail = ' · GCP Quota: Pro Image has a low 0–1 RPM default quota (Switch to Flash in Preferences)';
+      }
+      updateProgress(processed, total, `Rate limit (${status || 429}) · retrying in ${sec}s (${item.file.name})${detail}`, batchStartTime);
       announceToScreenReader(`Rate limit cooldown. Waiting ${sec} seconds.`);
     };
 
@@ -1856,10 +1860,10 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
           // Set shared cooldown memory for subsequent images in the batch
           state.rateLimitResetUntil = Date.now() + delayMs + 3000;
 
-          console.warn(`Gemini API returned ${response.status}. Cooling down for ${(delayMs / 1000).toFixed(1)}s (attempt ${attempt + 1}/${maxRetries})...`);
+          console.warn(`Gemini API returned ${response.status}: ${errMessage}. Cooling down for ${(delayMs / 1000).toFixed(1)}s (attempt ${attempt + 1}/${maxRetries})...`);
 
           await waitWithCountdown(delayMs, (sec, total) => {
-            if (onCountdownTick) onCountdownTick(sec, total, response.status);
+            if (onCountdownTick) onCountdownTick(sec, total, response.status, errMessage);
           }, signal);
 
           continue;
