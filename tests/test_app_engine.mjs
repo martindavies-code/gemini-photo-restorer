@@ -422,4 +422,214 @@ test('API key sanitization strips CLI flags, quotes, and whitespace', () => {
   assert.equal(sanitizeApiKey(undefined), '');
 });
 
+test('extractRetryDelayMs parses Retry-After header, Google RPC RetryInfo, and regex patterns', () => {
+  function extractRetryDelayMs(response, errJson, errText) {
+    if (response && response.headers && typeof response.headers.get === 'function') {
+      const retryHeader = response.headers.get('retry-after');
+      if (retryHeader) {
+        const sec = parseInt(retryHeader, 10);
+        if (!isNaN(sec) && sec > 0) {
+          return (sec * 1000) + 1000;
+        }
+        const dateMs = Date.parse(retryHeader);
+        if (!isNaN(dateMs) && dateMs > Date.now()) {
+          return (dateMs - Date.now()) + 1000;
+        }
+      }
+    }
+
+    if (errJson?.error?.details && Array.isArray(errJson.error.details)) {
+      for (const detail of errJson.error.details) {
+        if (detail.retryDelay) {
+          const match = String(detail.retryDelay).match(/^(\d+(?:\.\d+)?)s?$/);
+          if (match) {
+            const sec = parseFloat(match[1]);
+            if (!isNaN(sec) && sec > 0) {
+              return Math.round(sec * 1000) + 1000;
+            }
+          }
+        }
+      }
+    }
+
+    const combined = `${errJson?.error?.message || ''} ${errText || ''}`;
+    const match = combined.match(/(?:retry (?:after|in)|wait)\s*(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?/i);
+    if (match) {
+      const sec = parseFloat(match[1]);
+      if (!isNaN(sec) && sec > 0 && sec < 3600) {
+        return Math.round(sec * 1000) + 1000;
+      }
+    }
+
+    return null;
+  }
+
+  // 1. From standard Retry-After HTTP header
+  const mockResponseWithHeader = {
+    headers: {
+      get: (h) => (h === 'retry-after' ? '30' : null)
+    }
+  };
+  assert.equal(extractRetryDelayMs(mockResponseWithHeader, null, null), 31000);
+
+  // 2. From Google RPC RetryInfo details
+  const mockRpcError = {
+    error: {
+      code: 429,
+      status: 'RESOURCE_EXHAUSTED',
+      details: [
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '18.5s' }
+      ]
+    }
+  };
+  assert.equal(extractRetryDelayMs(null, mockRpcError, ''), 19500);
+
+  // 3. From text message via regex
+  assert.equal(
+    extractRetryDelayMs(null, null, 'Quota exceeded for metric ... please retry after 22.4s'),
+    23400
+  );
+  assert.equal(
+    extractRetryDelayMs(null, { error: { message: 'Rate limit hit. Wait 15 seconds before next request' } }, ''),
+    16000
+  );
+
+  // 4. Returns null when absent
+  assert.equal(extractRetryDelayMs(null, { error: { message: 'Generic server error' } }, ''), null);
+});
+
+test('isDailyQuotaExceeded distinguishes permanent daily limits from transient per-minute limits', () => {
+  function isDailyQuotaExceeded(errJson, errText) {
+    const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
+    return (
+      combined.includes('per day') ||
+      combined.includes('requests per day') ||
+      combined.includes('daily quota') ||
+      combined.includes('exceeded your daily') ||
+      combined.includes('quota_exceeded_daily')
+    );
+  }
+
+  // Daily quota errors (permanent until midnight PT)
+  assert.equal(isDailyQuotaExceeded(null, "Resource exhausted: Quota exceeded for metric 'GenerateContent requests per day'"), true);
+  assert.equal(isDailyQuotaExceeded({ error: { message: 'You have exceeded your daily quota for model gemini-3-pro' } }, ''), true);
+
+  // Transient rate limit errors (per-minute or concurrency)
+  assert.equal(isDailyQuotaExceeded(null, "Quota exceeded for metric 'GenerateContent requests per minute', please retry in 18s"), false);
+  assert.equal(isDailyQuotaExceeded({ error: { message: 'Rate limit reached, please slow down' } }, ''), false);
+});
+
+test('isFatalApiError fast-fails unrecoverable auth errors without futile retries', () => {
+  function isFatalApiError(status, errJson, errText) {
+    const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
+    if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || combined.includes('invalid_argument'))) return true;
+    if (status === 401 || status === 403) return true;
+    return false;
+  }
+
+  // Fatal errors
+  assert.equal(isFatalApiError(400, { error: { message: 'API_KEY_INVALID: API key not valid' } }, ''), true);
+  assert.equal(isFatalApiError(401, null, 'Unauthorized'), true);
+  assert.equal(isFatalApiError(403, { error: { message: 'The caller does not have permission' } }, ''), true);
+  assert.equal(isFatalApiError(403, null, 'Billing not enabled for project'), true);
+
+  // Non-fatal transient errors (should be retried)
+  assert.equal(isFatalApiError(429, { error: { message: 'Resource has been exhausted' } }, ''), false);
+  assert.equal(isFatalApiError(500, null, 'Internal server error'), false);
+  assert.equal(isFatalApiError(503, null, 'The service is temporarily unavailable'), false);
+});
+
+test('Image payload optimizer scales oversized dimensions preserving exact aspect ratio', () => {
+  const MAX_DIMENSION = 3072;
+  const SIZE_THRESHOLD_BYTES = 3.5 * 1024 * 1024;
+
+  function calculateTargetDimensions(width, height, fileSize) {
+    let needsOptimization = fileSize > SIZE_THRESHOLD_BYTES;
+    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+      needsOptimization = true;
+    }
+    if (!needsOptimization) {
+      return { width, height, optimized: false };
+    }
+    const maxSide = Math.max(width, height);
+    const scale = maxSide > MAX_DIMENSION ? (MAX_DIMENSION / maxSide) : 1;
+    return {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+      optimized: true
+    };
+  }
+
+  // 1. Standard web image (1920x1080, 2MB): untouched
+  const std = calculateTargetDimensions(1920, 1080, 2 * 1024 * 1024);
+  assert.equal(std.optimized, false);
+  assert.equal(std.width, 1920);
+  assert.equal(std.height, 1080);
+
+  // 2. High-res DSLR image (6000x4000, 24MB): scaled to max 3072 preserving 3:2
+  const dslr = calculateTargetDimensions(6000, 4000, 24 * 1024 * 1024);
+  assert.equal(dslr.optimized, true);
+  assert.equal(dslr.width, 3072);
+  assert.equal(dslr.height, 2048); // 3072 * (4000/6000) = 2048 exactly!
+
+  // 3. Tall portrait (4000x6000, 18MB): scaled to max 3072 preserving 2:3
+  const tall = calculateTargetDimensions(4000, 6000, 18 * 1024 * 1024);
+  assert.equal(tall.optimized, true);
+  assert.equal(tall.width, 2048);
+  assert.equal(tall.height, 3072);
+
+  // 4. Square large image (4096x4096): scaled to 3072x3072
+  const sq = calculateTargetDimensions(4096, 4096, 12 * 1024 * 1024);
+  assert.equal(sq.optimized, true);
+  assert.equal(sq.width, 3072);
+  assert.equal(sq.height, 3072);
+});
+
+test('0-byte file filtering prevents corrupt or empty files from queue entry', () => {
+  const incomingFiles = [
+    { name: 'photo1.jpg', size: 102400 },
+    { name: 'empty.jpg', size: 0 },
+    { name: 'photo2.png', size: 450000 },
+    { name: '.DS_Store', size: 0 }
+  ];
+
+  let skippedEmpty = 0;
+  const validFiles = [];
+  incomingFiles.forEach(file => {
+    if (!file || file.size === 0) {
+      skippedEmpty++;
+      return;
+    }
+    validFiles.push(file);
+  });
+
+  assert.equal(skippedEmpty, 2);
+  assert.equal(validFiles.length, 2);
+  assert.equal(validFiles[0].name, 'photo1.jpg');
+  assert.equal(validFiles[1].name, 'photo2.png');
+});
+
+test('retryAllFailed resets only failed items to ready status', () => {
+  const queue = [
+    { id: '1', status: 'restored', error: null },
+    { id: '2', status: 'error', error: 'Rate limit hit' },
+    { id: '3', status: 'restored', error: null },
+    { id: '4', status: 'error', error: 'Network timeout' },
+    { id: '5', status: 'ready', error: null }
+  ];
+
+  const failedItems = queue.filter(i => i.status === 'error');
+  assert.equal(failedItems.length, 2);
+
+  failedItems.forEach(item => {
+    item.status = 'ready';
+    item.error = null;
+  });
+
+  assert.equal(queue.filter(i => i.status === 'error').length, 0);
+  assert.equal(queue.filter(i => i.status === 'ready').length, 3);
+  assert.equal(queue.filter(i => i.status === 'restored').length, 2);
+});
+
+
 

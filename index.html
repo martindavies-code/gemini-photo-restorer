@@ -185,6 +185,13 @@
           </div>
           <div class="toolbar-right">
             <button type="button" class="btn-studio-text" id="clearAllBtn" aria-label="Clear all images from queue">Clear Queue</button>
+            <button type="button" class="btn-studio btn-studio-secondary" id="retryFailedBtn" style="display: none;" aria-label="Retry all failed restorations">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M23 4v6h-6"></path>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span>Retry Failed (<span id="failedCount">0</span>)</span>
+            </button>
             <button type="button" class="btn-studio btn-studio-secondary" id="downloadZipBtn" style="display: none;" aria-label="Download all restored images as a ZIP archive">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>

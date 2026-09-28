@@ -1225,8 +1225,33 @@ body {
 
 .badge-ready      { background: rgba(12,14,18,0.85); border: 1px solid var(--border-mid); color: var(--text-muted); }
 .badge-processing { background: rgba(232,144,58,0.15); border: 1px solid var(--border-accent); color: var(--amber-vivid); }
+.badge-cooldown   { background: rgba(245,166,35,0.18); border: 1px solid rgba(245,166,35,0.45); color: #f5a623; animation: pulse-cooldown 1.5s ease-in-out infinite; }
 .badge-restored   { background: rgba(34,201,151,0.12); border: 1px solid rgba(34,201,151,0.35); color: var(--sage); }
 .badge-error      { background: var(--danger-glow); border: 1px solid rgba(240,82,82,0.3); color: var(--danger); }
+
+@keyframes pulse-cooldown {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
+
+.card-item.status-cooldown {
+  border-color: rgba(245, 166, 35, 0.4);
+  box-shadow: 0 0 0 1px rgba(245, 166, 35, 0.3), 0 4px 20px rgba(245, 166, 35, 0.15);
+}
+
+#retryFailedBtn {
+  border-color: rgba(232, 144, 58, 0.45);
+  color: var(--amber-vivid);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+#retryFailedBtn:hover:not(:disabled) {
+  background: var(--grad-amber-soft);
+  border-color: var(--amber-vivid);
+  color: #fff;
+}
 
 .btn-card-remove {
   position: absolute;
