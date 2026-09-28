@@ -21,11 +21,55 @@ The final output must be a hyper-realistic, 8K resolution image. The aesthetic s
 
 Do not alter the fundamental composition or the identity of the subject. Strictly avoid the "waxy," "plastic," or overly smooth look common in AI upscaling. Do not over-saturate colours. Do not introduce over-sharpening halos. Ensure facial features remain anatomically correct and true to the original.`;
 
+// Gemini-supported aspect ratios with their numeric values (width/height)
+const GEMINI_ASPECT_RATIOS = [
+  { label: '1:1',  value: 1.0 },
+  { label: '4:3',  value: 4 / 3 },
+  { label: '3:4',  value: 3 / 4 },
+  { label: '3:2',  value: 3 / 2 },
+  { label: '2:3',  value: 2 / 3 },
+  { label: '16:9', value: 16 / 9 },
+  { label: '9:16', value: 9 / 16 },
+  { label: '5:4',  value: 5 / 4 },
+  { label: '4:5',  value: 4 / 5 },
+  { label: '21:9', value: 21 / 9 },
+];
+
+/**
+ * Given a File, resolves to the Gemini aspect ratio label that best
+ * preserves the native geometry (log-scale, so 4:3 == 3:4 distance-wise).
+ * Falls back to '1:1' if dimensions cannot be determined.
+ * @param {File} file
+ * @returns {Promise<string>}
+ */
+async function detectAspectRatio(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { width, height } = bitmap;
+    bitmap.close();
+    if (!width || !height) return '1:1';
+    const target = Math.log(width / height);
+    let best = GEMINI_ASPECT_RATIOS[0];
+    let bestDist = Infinity;
+    for (const ratio of GEMINI_ASPECT_RATIOS) {
+      const dist = Math.abs(target - Math.log(ratio.value));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = ratio;
+      }
+    }
+    return best.label;
+  } catch {
+    return '1:1';
+  }
+}
+
 // Application State
 const state = {
   apiKey: (localStorage.getItem('lumina_api_key') || '').trim().replace(/^["']+|["']+$/g, ''),
   model: localStorage.getItem('lumina_model') || 'gemini-3-pro-image',
   resolution: localStorage.getItem('lumina_res') || '4K',
+  aspectRatio: localStorage.getItem('lumina_aspect') || 'auto',
   prompt: localStorage.getItem('lumina_prompt') || DEFAULT_PROMPT,
   dirHandle: null,
   fullsizeHandle: null,
@@ -70,12 +114,14 @@ const el = {
   apiKeyInput: document.getElementById('apiKeyInput'),
   modelSelect: document.getElementById('modelSelect'),
   resolutionSelect: document.getElementById('resolutionSelect'),
+  aspectRatioSelect: document.getElementById('aspectRatioSelect'),
   promptInput: document.getElementById('promptInput'),
   resetPromptBtn: document.getElementById('resetPromptBtn'),
   activeModelLabel: document.getElementById('activeModelLabel'),
   compareDialog: document.getElementById('compareDialog'),
   closeCompareBtn: document.getElementById('closeCompareBtn'),
   compareFilename: document.getElementById('compareFilename'),
+  compareAspectBadge: document.getElementById('compareAspectBadge'),
   beforeImg: document.getElementById('beforeImg'),
   afterImg: document.getElementById('afterImg'),
   afterWrapper: document.getElementById('afterWrapper'),
@@ -170,6 +216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   el.apiKeyInput.value = state.apiKey;
   el.modelSelect.value = state.model;
   el.resolutionSelect.value = state.resolution;
+  if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
   el.promptInput.value = state.prompt;
   updateModelLabel();
 
@@ -279,6 +326,7 @@ function setupEventListeners() {
     el.apiKeyInput.value = state.apiKey;
     el.modelSelect.value = state.model;
     el.resolutionSelect.value = state.resolution;
+    if (el.aspectRatioSelect) el.aspectRatioSelect.value = state.aspectRatio;
     el.promptInput.value = state.prompt;
     el.settingsDialog.showModal();
   });
@@ -288,11 +336,13 @@ function setupEventListeners() {
     state.apiKey = el.apiKeyInput.value.trim().replace(/^["']+|["']+$/g, '');
     state.model = el.modelSelect.value;
     state.resolution = el.resolutionSelect.value;
+    state.aspectRatio = el.aspectRatioSelect ? el.aspectRatioSelect.value : 'auto';
     state.prompt = el.promptInput.value.trim() || DEFAULT_PROMPT;
 
     localStorage.setItem('lumina_api_key', state.apiKey);
     localStorage.setItem('lumina_model', state.model);
     localStorage.setItem('lumina_res', state.resolution);
+    localStorage.setItem('lumina_aspect', state.aspectRatio);
     localStorage.setItem('lumina_prompt', state.prompt);
 
     updateModelLabel();
@@ -765,6 +815,16 @@ async function callGeminiImageRestoration(file, signal = null) {
   const base64Data = await fileToBase64(file);
   const mimeType = file.type || 'image/jpeg';
 
+  // Resolve the aspect ratio to use for this specific image.
+  // 'auto' = detect native dimensions from the file; explicit value = use as-is.
+  let resolvedAspectRatio;
+  if (state.aspectRatio === 'auto') {
+    resolvedAspectRatio = await detectAspectRatio(file);
+    console.info(`[Aspect Ratio] Auto-detected "${resolvedAspectRatio}" for ${file.name}`);
+  } else {
+    resolvedAspectRatio = state.aspectRatio;
+  }
+
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(state.model)}:generateContent?key=${encodeURIComponent(state.apiKey)}`;
 
   const payload = {
@@ -785,7 +845,8 @@ async function callGeminiImageRestoration(file, signal = null) {
     generationConfig: {
       responseModalities: ["IMAGE"],
       imageConfig: {
-        imageSize: state.resolution
+        imageSize: state.resolution,
+        aspectRatio: resolvedAspectRatio
       }
     }
   };
@@ -894,14 +955,21 @@ function fileToBase64(file) {
   });
 }
 
-// Interactive In-Situ Comparison Slider with Pixel-Perfect Sync
+// Interactive In-Situ Comparison Slider with Aspect-Ratio-Safe Sync
+// The before-frame (position:static) drives the container height naturally via
+// its intrinsic aspect ratio. The after-frame (position:absolute) must be given
+// explicit dimensions matching the container so object-fit:contain aligns
+// identically for both images. We NEVER force a specific aspect ratio here.
 function syncSliderDimensions() {
-  const rect = el.sliderContainer.getBoundingClientRect();
-  if (rect.width > 0 && rect.height > 0) {
-    el.afterImg.style.width = `${rect.width}px`;
-    el.afterImg.style.height = `${rect.height}px`;
-    el.afterImg.style.maxWidth = 'none';
-    el.afterImg.style.maxHeight = 'none';
+  const containerRect = el.sliderContainer.getBoundingClientRect();
+  const imgRect = el.beforeImg.getBoundingClientRect();
+  // Use the actual rendered before-image dimensions as the reference box.
+  // If the image hasn't loaded yet, fall back to the container dimensions.
+  const w = (imgRect.width > 4 ? imgRect.width : containerRect.width);
+  const h = (imgRect.height > 4 ? imgRect.height : containerRect.height || w);
+  if (w > 0) {
+    el.afterImg.style.width = `${w}px`;
+    el.afterImg.style.height = `${h}px`;
   }
 }
 
@@ -975,6 +1043,13 @@ function setupSplitSlider() {
 function openCompareModal(item) {
   state.activeCompareItem = item;
   el.compareFilename.textContent = item.file.name;
+
+  // Update the aspect badge to reflect what was used for this image
+  if (el.compareAspectBadge) {
+    el.compareAspectBadge.textContent =
+      state.aspectRatio === 'auto' ? 'Auto Aspect Preserved' : `Aspect: ${state.aspectRatio}`;
+  }
+
   el.beforeImg.src = item.originalUrl;
   el.afterImg.src = item.restoredUrl;
   el.downloadRestoredBtn.href = item.restoredUrl;
@@ -982,8 +1057,15 @@ function openCompareModal(item) {
 
   el.compareDialog.showModal();
 
-  el.beforeImg.onload = syncSliderDimensions;
-  el.afterImg.onload = syncSliderDimensions;
+  // Sync dimensions only after both images have loaded so the container
+  // has settled into its final layout before the clip calculation runs.
+  let loadedCount = 0;
+  const onImageLoad = () => {
+    loadedCount++;
+    if (loadedCount >= 2) syncSliderDimensions();
+  };
+  el.beforeImg.onload = onImageLoad;
+  el.afterImg.onload = onImageLoad;
 
   requestAnimationFrame(() => {
     syncSliderDimensions();

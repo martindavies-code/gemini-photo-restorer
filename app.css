@@ -493,13 +493,30 @@ body {
   position: relative;
   width: 100%;
   height: 180px;
-  background: #000;
+  background: #08090b;
 }
 
 .card-preview img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #08090b;
+}
+
+.badge-ratio {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  background: rgba(12, 14, 18, 0.88);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-accent-warm);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 .status-badge {
@@ -653,10 +670,35 @@ body {
   max-width: 92vw;
 }
 
+.compare-header-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.aspect-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--color-accent-warm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .split-viewport {
   position: relative;
   width: 100%;
-  height: 480px;
+  /* Do NOT set a fixed aspect-ratio here — the image's own intrinsic ratio
+     determines the container height via the before-frame img (position:static
+     rendered behind the absolute layers). The clip mechanism scales correctly
+     regardless of portrait vs landscape vs square source geometry. */
+  max-height: min(640px, 72vh);
+  margin: 0 auto;
   background: #000;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
@@ -672,13 +714,28 @@ body {
   border-color: var(--color-accent-warm);
 }
 
-.split-frame {
+/* The before-frame is position:static so its intrinsic ratio determines the
+   container height. Everything else overlays absolutely on top of it. */
+.before-frame {
+  position: static;
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(640px, 72vh);
+  object-fit: contain;
+  object-position: center;
+}
+
+/* The after-frame overlays the before using absolute positioning and must
+   match the container exactly so object-fit:contain renders identically. */
+.after-frame {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  object-position: center;
 }
 
 .split-clip {
@@ -690,9 +747,12 @@ body {
   overflow: hidden;
   border-right: 2px solid var(--color-accent-warm);
 }
+/* The after-frame must fill exactly the clip container so the image renders
+   via object-fit:contain — DO NOT set max-width/max-height:none here as that
+   would bypass contain and cause stretching. */
 .split-clip .split-frame {
-  max-width: none;
-  max-height: none;
+  object-fit: contain;
+  object-position: center;
 }
 
 .split-line {
