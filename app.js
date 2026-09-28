@@ -1451,7 +1451,7 @@ function createZipBlob(files) {
 async function handleDownloadAllZip() {
   const restoredItems = state.filesQueue.filter(item => item.status === 'restored' && item.restoredBlob);
   if (restoredItems.length === 0) {
-    alert('No restored images available to package into ZIP.');
+    showToast('No restored images available to package into ZIP.', 'warning');
     return;
   }
 
@@ -1480,9 +1480,10 @@ async function handleDownloadAllZip() {
     document.body.removeChild(a);
 
     setTimeout(() => revokeManagedUrl(zipUrl), 10000);
+    showToast(`✓ ZIP archive created (${filesForZip.length} files).`, 'success', 3500);
   } catch (err) {
     console.error('ZIP generation error:', err);
-    alert('Could not package ZIP: ' + err.message);
+    showToast('Could not package ZIP: ' + err.message, 'error');
   } finally {
     el.downloadZipBtn.disabled = false;
     el.downloadZipBtn.textContent = 'Download Restored ZIP';

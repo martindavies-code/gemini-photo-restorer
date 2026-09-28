@@ -147,5 +147,43 @@ class TestAtomicRestorationLogic(unittest.TestCase):
         self.assertFalse(tmp_path.exists())
 
 
+class TestAspectRatioAndDimensions(unittest.TestCase):
+    def test_find_closest_aspect_ratio_standard_cases(self):
+        self.assertEqual(restore_images.find_closest_aspect_ratio(1000, 1000), "1:1")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(1920, 1080), "16:9")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(1080, 1920), "9:16")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(4000, 3000), "4:3")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(3000, 4000), "3:4")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(6000, 4000), "3:2")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(4000, 6000), "2:3")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(2560, 1080), "21:9")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(0, 0), "1:1")
+        self.assertEqual(restore_images.find_closest_aspect_ratio(-10, 50), "1:1")
+
+    def test_get_image_dimensions_png(self):
+        import struct
+        test_dir = tempfile.mkdtemp()
+        try:
+            png_file = Path(test_dir) / "sample.png"
+            # Valid PNG header with IHDR dimensions 1024x768
+            header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 1024, 768) + b"\x08\x02\x00\x00\x00"
+            png_file.write_bytes(header)
+            w, h = restore_images.get_image_dimensions(png_file)
+            self.assertEqual((w, h), (1024, 768))
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_get_image_dimensions_invalid_returns_zero(self):
+        test_dir = tempfile.mkdtemp()
+        try:
+            corrupt_file = Path(test_dir) / "corrupt.jpg"
+            corrupt_file.write_bytes(b"not_an_image_data")
+            w, h = restore_images.get_image_dimensions(corrupt_file)
+            self.assertEqual((w, h), (0, 0))
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
+
