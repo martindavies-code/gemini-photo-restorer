@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Atelier 8K - Forensic Photo Restoration & Upscaling
  * ===================================================
  * Client-Side Engine with File System Access API, Gemini 3 Pro Image Integration,
@@ -9,10 +9,10 @@
 // Replaces all browser alert() calls. Non-blocking, screen-reader friendly,
 // auto-dismisses. Types: 'success' | 'error' | 'warning' | 'info'
 const TOAST_ICONS = {
-  success: '✓',
-  error:   '✕',
-  warning: '⚠',
-  info:    'ℹ',
+  success: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="2,8 6,12 14,4"/></svg>',
+  error:   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" width="14" height="14"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg>',
+  warning: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M8 2L14.5 13H1.5Z"/><line x1="8" y1="7" x2="8" y2="10"/><line x1="8" y1="12" x2="8" y2="12.5"/></svg>',
+  info:    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14"><circle cx="8" cy="8" r="6.5"/><line x1="8" y1="7" x2="8" y2="11.5"/><line x1="8" y1="5" x2="8" y2="5.5"/></svg>',
 };
 
 function showToast(message, type = 'info', durationMs = 4500) {
@@ -26,7 +26,7 @@ function showToast(message, type = 'info', durationMs = 4500) {
   toast.innerHTML = `
     <span class="toast-icon" aria-hidden="true">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
     <span class="toast-message">${message}</span>
-    <button type="button" class="toast-close" aria-label="Dismiss notification">✕</button>
+    <button type="button" class="toast-close" aria-label="Dismiss notification"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" width="11" height="11"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg></button>
   `;
 
   toast.querySelector('.toast-close').addEventListener('click', () => dismissToast(toast));
@@ -69,9 +69,9 @@ function updateApiKeyStatus() {
     pill.title = hasKey ? 'API key configured — click to change' : 'No API key — click to add one';
     pill.setAttribute('aria-label', hasKey ? 'API key is configured. Click to open preferences.' : 'No API key set. Click to open preferences.');
   }
-  if (text)       text.textContent = hasKey ? '✓ API Key Set' : '⚠ No API Key';
+  if (text)       text.textContent = hasKey ? 'Key Connected' : 'No API Key';
   if (banner)     banner.style.display = hasKey ? 'none' : 'flex';
-  if (liveStatus) liveStatus.textContent = hasKey ? '✓ Key saved' : '';
+  if (liveStatus) liveStatus.textContent = hasKey ? 'Key saved' : '';
 }
 
 
@@ -799,7 +799,7 @@ async function loadDirectoryHandle(dirHandle) {
   }
 
   addFilesToQueue(files);
-  showToast(`✓ Loaded ${files.length} photo${files.length !== 1 ? 's' : ''} from "${dirHandle.name}".`, 'success', 3500);
+  showToast(`Loaded ${files.length} photo${files.length !== 1 ? 's' : ''} from "${dirHandle.name}".`, 'success', 3500);
 }
 
 async function reopenSavedFolder() {
@@ -874,7 +874,7 @@ function handleFallbackInput(fileList) {
     el.currentFolderLabel.textContent = folderPath;
     el.outputFolderLabel.textContent = 'Outputs available for immediate PNG or ZIP download';
     addFilesToQueue(files);
-    showToast(`✓ Loaded ${files.length} photo${files.length !== 1 ? 's' : ''}.`, 'success', 3500);
+    showToast(`Loaded ${files.length} photo${files.length !== 1 ? 's' : ''}.`, 'success', 3500);
   } else {
     showToast('No supported images found in the selection. Please choose JPG, PNG, or WebP files.', 'warning', 5000);
   }
@@ -911,7 +911,7 @@ async function handleFileDrop(e) {
     el.currentFolderLabel.textContent = 'Imported Photos';
     el.outputFolderLabel.textContent = 'Outputs available for immediate PNG or ZIP download';
     addFilesToQueue(files);
-    showToast(`✓ Loaded ${files.length} photo${files.length !== 1 ? 's' : ''}.`, 'success', 3500);
+    showToast(`Loaded ${files.length} photo${files.length !== 1 ? 's' : ''}.`, 'success', 3500);
   } else {
     showToast('No supported images were found in the dropped item.', 'warning', 5000);
   }

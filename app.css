@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Atelier 8K — Enterprise Design System
  * Premium darkroom studio aesthetic. Inspired by Phase One, Capture One,
  * and high-end professional imaging software. Zero tolerance for mediocrity.
@@ -122,30 +122,16 @@ body {
   flex-wrap: wrap;
 }
 
-.toast-icon {
-  flex-shrink: 0;
-  font-size: 15px;
-  line-height: 1.45;
-}
+.toast-icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; }
+.toast-icon svg { display: block; }
 
 .toast-message {
   flex: 1;
   min-width: 0;
 }
 
-.toast-close {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  opacity: 0.5;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 0 2px;
-  line-height: 1.45;
-  transition: opacity var(--dur-fast);
-  align-self: flex-start;
-}
+.toast-close { flex-shrink: 0; background: none; border: none; color: inherit; opacity: 0.5; cursor: pointer; padding: 2px; line-height: 1; display: flex; align-items: center; justify-content: center; transition: opacity var(--dur-fast); align-self: flex-start; margin-top: 1px; }
+.toast-close svg { display: block; }
 .toast-close:hover { opacity: 1; }
 
 .toast-actions {
