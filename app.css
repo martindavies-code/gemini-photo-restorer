@@ -522,6 +522,36 @@ body {
 .badge-restored { color: var(--color-accent-sage); border-color: var(--color-accent-sage); }
 .badge-error { color: var(--color-accent-danger); border-color: var(--color-accent-danger); }
 
+.btn-card-remove {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(12, 14, 18, 0.88);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background-color 0.15s, color 0.15s;
+  z-index: 2;
+}
+
+.card-item:hover .btn-card-remove {
+  opacity: 1;
+}
+
+.btn-card-remove:hover {
+  background: rgba(239, 68, 68, 0.9);
+  border-color: #ef4444;
+  color: #fff;
+}
+
 .card-info {
   padding: var(--space-3);
   display: flex;
@@ -543,6 +573,15 @@ body {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.card-metrics .error-msg {
+  color: var(--color-accent-danger);
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-actions-bar {
@@ -624,6 +663,7 @@ body {
   overflow: hidden;
   cursor: ew-resize;
   user-select: none;
+  touch-action: none;
 }
 
 .split-frame {
@@ -645,8 +685,8 @@ body {
   border-right: 2px solid var(--color-accent-warm);
 }
 .split-clip .split-frame {
-  width: 900px;
-  max-width: 92vw;
+  max-width: none;
+  max-height: none;
 }
 
 .split-line {
