@@ -275,20 +275,23 @@
             <div class="form-group">
               <label for="modelSelect" class="form-label">AI Restoration Model</label>
               <select id="modelSelect" class="form-select">
-                <option value="gemini-3-pro-image" selected>Gemini 3 Pro Image (Nano Banana Pro)</option>
-                <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Nano Banana 2)</option>
+                <option value="gemini-3-pro-image" selected>Gemini 3 Pro Image (Nano Banana Pro · Studio Grade)</option>
+                <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Nano Banana 2 · Budget / Fast)</option>
               </select>
             </div>
 
             <div class="form-group">
               <label for="resolutionSelect" class="form-label">Native Output Resolution</label>
               <select id="resolutionSelect" class="form-select">
-                <option value="4K" selected>4K Studio (Highest Definition)</option>
-                <option value="2K">2K Resolution</option>
-                <option value="1K">1K Resolution</option>
+                <option value="4K" selected>4K Studio (~$0.24 / ~19p per img)</option>
+                <option value="2K">2K Resolution (~$0.13 / ~10p per img)</option>
+                <option value="1K">1K Resolution (~$0.13 / ~10p per img)</option>
               </select>
             </div>
           </div>
+          <span class="form-helper" style="margin-top: -0.25rem; margin-bottom: 0.75rem; display: block;">
+            💡 <strong>API Cost Tip:</strong> 2K resolution halves your token bill compared to 4K. Google Cloud API keys are metered per generation and operate independently from consumer Gemini Advanced/Google One subscriptions.
+          </span>
 
           <div class="form-group">
             <label for="aspectRatioSelect" class="form-label">Aspect Ratio Mode</label>
