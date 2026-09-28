@@ -57,7 +57,8 @@
         </div>
         <!-- API key status indicator -->
         <div id="apiKeyStatus" class="api-key-pill api-key-missing" title="No API key set — click Preferences to add one">
-          <span id="apiKeyStatusText">⚠️ No API Key</span>
+          <span class="api-key-pill-dot" aria-hidden="true"></span>
+          <span id="apiKeyStatusText">No API Key</span>
         </div>
         <button type="button" class="btn-studio btn-studio-ghost" id="openSettingsBtn" aria-label="Open preferences" aria-haspopup="dialog">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -91,7 +92,11 @@
     <main class="studio-main" id="studioMain">
       <!-- Onboarding banner: shown only when no API key is set -->
       <div class="onboarding-banner" id="onboardingBanner" style="display:none;" role="alert">
-        <span class="onboarding-icon" aria-hidden="true">🔑</span>
+        <span class="onboarding-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+        </span>
         <div class="onboarding-copy">
           <strong>First time? Add your Gemini API key to get started.</strong>
           <span>It's stored only in your browser — never sent anywhere except Google's API.</span>
@@ -224,11 +229,11 @@
         </div>
 
         <!-- Interactive Split-Slider with In-Situ Labels & Full Keyboard Accessibility -->
-        <div class="split-viewport" id="sliderContainer" tabindex="0" role="slider" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100" aria-label="Before and after comparison slider">
-          <img id="beforeImg" class="split-frame before-frame" src="" alt="Original Source">
+        <div class="split-viewport" id="sliderContainer" tabindex="0" role="slider" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100" aria-valuetext="50% comparison" aria-label="Before and after comparison slider">
+          <img id="beforeImg" class="split-frame before-frame" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E" alt="Original Source">
           
           <div class="split-clip" id="afterWrapper">
-            <img id="afterImg" class="split-frame after-frame" src="" alt="Restored 4K Output">
+            <img id="afterImg" class="split-frame after-frame" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E" alt="Restored 4K Output">
           </div>
 
           <div class="split-line" id="splitDivider">
@@ -348,7 +353,7 @@
             </div>
 
             <span class="form-helper gcp-credit-tip">
-              💡 <strong>GCP Free Trial Credits:</strong> Your ~£220 Google Cloud credits apply directly to Vertex AI requests, giving you hundreds of high-res image restorations without Google AI Studio rate limits.
+              <svg class="tip-icon" viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-2.8 8c.5.4.8 1 .8 1.6v.9h4v-.9c0-.6.3-1.2.8-1.6a4.5 4.5 0 0 0-2.8-8zM6.5 13.5a1.5 1.5 0 0 0 3 0v-.5h-3v.5z"/></svg> <strong>GCP Free Trial Credits:</strong> Your ~£220 Google Cloud credits apply directly to Vertex AI requests, giving you hundreds of high-res image restorations without Google AI Studio rate limits.
             </span>
           </div><!-- /authPanelVertex -->
 
@@ -371,7 +376,7 @@
             </div>
           </div>
           <span class="form-helper" style="margin-top: -0.25rem; margin-bottom: 0.75rem; display: block;">
-            💡 <strong>API Cost Tip:</strong> 2K resolution halves your token bill compared to 4K. Google Cloud API keys are metered per generation and operate independently from consumer Gemini Advanced/Google One subscriptions.
+            <svg class="tip-icon" viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-2.8 8c.5.4.8 1 .8 1.6v.9h4v-.9c0-.6.3-1.2.8-1.6a4.5 4.5 0 0 0-2.8-8zM6.5 13.5a1.5 1.5 0 0 0 3 0v-.5h-3v.5z"/></svg> <strong>API Cost Tip:</strong> 2K resolution halves your token bill compared to 4K. Google Cloud API keys are metered per generation and operate independently from consumer Gemini Advanced/Google One subscriptions.
           </span>
 
           <div class="form-group">

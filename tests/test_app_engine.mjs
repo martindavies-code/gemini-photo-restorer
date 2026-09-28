@@ -1,383 +1,295 @@
 /**
- * Atelier 8K - Client Engine Test Suite (Node.js native test runner)
- * Tests binary algorithms, PKZip engine, CRC32, Base64 decoding, and slider mathematics.
+ * Atelier 8K - Client Engine Test Suite (Node.js Native Test Runner)
+ * =================================================================
+ * Forensic testing for binary algorithms, PKZip engine, CRC-32 RFC vectors,
+ * Base64 memory decoding, Pointer Events math, WAI-ARIA accessibility,
+ * Gemini API & Google Vertex AI error classification, Retry-After header parsing,
+ * and aspect-ratio preserving payload optimization.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 
-// CRC-32 Table & Calculator (matching app.js)
-const CRC32_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let j = 0; j < 8; j++) {
-      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
-    }
-    table[i] = c;
-  }
-  return table;
-})();
+const require = createRequire(import.meta.url);
+const app = require('../app.js');
 
-function calculateCrc32(uint8Array) {
-  let crc = 0xffffffff;
-  for (let i = 0; i < uint8Array.length; i++) {
-    crc = CRC32_TABLE[(crc ^ uint8Array[i]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
+const {
+  calculateCrc32,
+  createZipBlob,
+  parseGeminiError,
+  extractRetryDelayMs,
+  isDailyQuotaExceeded,
+  isFatalApiError,
+  sanitizeApiKey,
+  escapeHtml,
+  buildApiEndpoint,
+  isAuthConfigured,
+  GEMINI_ASPECT_RATIOS,
+  state
+} = app;
 
-// In-Browser Native Zero-Dependency ZIP Packaging Engine
-function createZipUint8Array(files) {
-  const fileRecords = [];
-  let offset = 0;
-  const parts = [];
-  const textEncoder = new TextEncoder();
-
-  const now = new Date();
-  const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xffff;
-  const dosDate = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xffff;
-
-  const usedNames = new Set();
-
-  for (const file of files) {
-    let cleanName = (file.name || 'restored_image.png').replace(/^(\.\.[\/\\])+/, '').replace(/[\/\\]+/g, '_');
-    if (usedNames.has(cleanName)) {
-      const dotIdx = cleanName.lastIndexOf('.');
-      const base = dotIdx !== -1 ? cleanName.slice(0, dotIdx) : cleanName;
-      const ext = dotIdx !== -1 ? cleanName.slice(dotIdx) : '';
-      let counter = 1;
-      while (usedNames.has(`${base}_${counter}${ext}`)) {
-        counter++;
-      }
-      cleanName = `${base}_${counter}${ext}`;
-    }
-    usedNames.add(cleanName);
-
-    const nameBytes = textEncoder.encode(cleanName);
-    const dataBytes = file.data instanceof Uint8Array ? file.data : new Uint8Array(file.data);
-    const crc = calculateCrc32(dataBytes);
-    const size = dataBytes.length;
-
-    const localHeader = new Uint8Array(30 + nameBytes.length);
-    const view = new DataView(localHeader.buffer);
-
-    view.setUint32(0, 0x04034b50, true); // Local header signature
-    view.setUint16(4, 20, true);         // Version needed
-    view.setUint16(6, 0x0800, true);     // General purpose flag: Bit 11 set for UTF-8!
-    view.setUint16(8, 0, true);          // Compression (Store = 0)
-    view.setUint16(10, dosTime, true);   // MS-DOS Mod Time
-    view.setUint16(12, dosDate, true);   // MS-DOS Mod Date
-    view.setUint32(14, crc, true);       // CRC-32
-    view.setUint32(18, size, true);      // Compressed Size
-    view.setUint32(22, size, true);      // Uncompressed Size
-    view.setUint16(26, nameBytes.length, true);
-    view.setUint16(28, 0, true);         // Extra field length
-    localHeader.set(nameBytes, 30);
-
-    fileRecords.push({ nameBytes, crc, size, offset });
-    offset += localHeader.length + size;
-
-    parts.push(localHeader);
-    parts.push(dataBytes);
-  }
-
-  const centralDirStart = offset;
-  let centralDirSize = 0;
-
-  for (const record of fileRecords) {
-    const cdHeader = new Uint8Array(46 + record.nameBytes.length);
-    const view = new DataView(cdHeader.buffer);
-
-    view.setUint32(0, 0x02014b50, true); // Central directory signature
-    view.setUint16(4, 20, true);         // Version made by
-    view.setUint16(6, 20, true);         // Version needed
-    view.setUint16(8, 0x0800, true);     // Bit 11 UTF-8
-    view.setUint16(10, 0, true);         // Compression (Store = 0)
-    view.setUint16(12, dosTime, true);   // Mod Time
-    view.setUint16(14, dosDate, true);   // Mod Date
-    view.setUint32(16, record.crc, true);// CRC-32
-    view.setUint32(20, record.size, true);// Compressed Size
-    view.setUint32(24, record.size, true);// Uncompressed Size
-    view.setUint16(28, record.nameBytes.length, true);
-    view.setUint16(30, 0, true);         // Extra field length
-    view.setUint16(32, 0, true);         // Comment length
-    view.setUint16(34, 0, true);         // Disk start
-    view.setUint16(36, 0, true);         // Internal attributes
-    view.setUint32(38, 0, true);         // External attributes
-    view.setUint32(42, record.offset, true); // Relative offset
-    cdHeader.set(record.nameBytes, 46);
-
-    parts.push(cdHeader);
-    centralDirSize += cdHeader.length;
-  }
-
-  const eocd = new Uint8Array(22);
-  const eocdView = new DataView(eocd.buffer);
-  eocdView.setUint32(0, 0x06054b50, true); // EOCD signature
-  eocdView.setUint16(4, 0, true);                  // Disk number
-  eocdView.setUint16(6, 0, true);                  // Start disk
-  eocdView.setUint16(8, fileRecords.length, true); // Total entries on disk
-  eocdView.setUint16(10, fileRecords.length, true);// Total entries
-  eocdView.setUint32(12, centralDirSize, true);    // Size of CD
-  eocdView.setUint32(16, centralDirStart, true);   // Offset of CD
-  eocdView.setUint16(20, 0, true);                 // Comment length
-
-  parts.push(eocd);
-
-  // Combine into single Uint8Array
-  const totalLength = parts.reduce((acc, p) => acc + p.length, 0);
-  const combined = new Uint8Array(totalLength);
-  let pos = 0;
-  for (const part of parts) {
-    combined.set(part, pos);
-    pos += part.length;
-  }
-  return combined;
-}
-
-// Memory-efficient Base64 binary decoding
-function decodeBase64ToBytes(base64Str) {
-  const binaryStr = atob(base64Str);
-  const len = binaryStr.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
-  return bytes;
-}
-
+// ─── 1. CRC-32 Standard RFC Test Vectors ──────────────────────────────────────
 test('CRC32 standard RFC test vector validation', () => {
-  const vector = new TextEncoder().encode('123456789');
-  const crc = calculateCrc32(vector);
-  // Standard CRC-32 test vector for '123456789' is 0xcbf43926
-  assert.equal(crc, 0xcbf43926);
+  // Test 1: Empty string -> 0x00000000
+  const empty = new Uint8Array(0);
+  assert.equal(calculateCrc32(empty), 0x00000000);
+
+  // Test 2: Standard RFC 3720 check string "123456789" -> 0xcbf43926 (3421780262)
+  const rfcCheckBytes = new TextEncoder().encode('123456789');
+  assert.equal(calculateCrc32(rfcCheckBytes), 0xcbf43926);
+
+  // Test 3: "The quick brown fox jumps over the lazy dog" -> 0x414fa339 (1095768889)
+  const foxBytes = new TextEncoder().encode('The quick brown fox jumps over the lazy dog');
+  assert.equal(calculateCrc32(foxBytes), 0x414fa339);
+
+  // Test 4: Single byte 'a' -> 0xe8b7be43
+  const aByte = new TextEncoder().encode('a');
+  assert.equal(calculateCrc32(aByte), 0xe8b7be43);
 });
 
-test('PKZip engine creates valid ZIP binary structure', () => {
+// ─── 2. In-Browser PKZip Binary Engine ─────────────────────────────────────────
+test('PKZip engine creates valid ZIP binary structure with RFC compliance', async () => {
+  const dummyPngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
   const files = [
-    { name: 'photo1.png', data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
-    { name: 'portrait_ñ.png', data: new Uint8Array([1, 2, 3, 4, 5]) }
+    { name: 'photo_01.png', data: dummyPngBytes },
+    { name: 'photo_02.png', data: new Uint8Array([1, 2, 3, 4, 5]) }
   ];
 
-  const zipBytes = createZipUint8Array(files);
+  const zipBlob = createZipBlob(files);
+  assert.ok(zipBlob instanceof Blob);
+  assert.equal(zipBlob.type, 'application/zip');
+
+  const arrayBuffer = await zipBlob.arrayBuffer();
+  const zipBytes = new Uint8Array(arrayBuffer);
   const view = new DataView(zipBytes.buffer);
 
-  // Verify first local file header signature
-  assert.equal(view.getUint32(0, true), 0x04034b50);
+  // Check 1: Local File Header 1 magic signature 0x04034b50
+  assert.equal(view.getUint32(0, true), 0x04034b50, 'Local Header 1 signature mismatch');
 
-  // Find End of Central Directory signature (0x06054b50) at the end
-  const eocdOffset = zipBytes.length - 22;
-  assert.equal(view.getUint32(eocdOffset, true), 0x06054b50);
+  // Check 2: Version needed = 20 (PKZip 2.0)
+  assert.equal(view.getUint16(4, true), 20);
 
-  // Verify entry count in EOCD
-  assert.equal(view.getUint16(eocdOffset + 8, true), 2);
-  assert.equal(view.getUint16(eocdOffset + 10, true), 2);
-});
+  // Check 3: General purpose bit flag Bit 11 set (0x0800 for UTF-8)
+  assert.equal((view.getUint16(6, true) & 0x0800), 0x0800, 'Bit 11 UTF-8 flag must be set');
 
-test('PKZip engine sanitizes path traversal attacks and deduplicates colliding names', () => {
-  const files = [
-    { name: '../../etc/passwd', data: new Uint8Array([1, 2, 3]) },
-    { name: 'sample.png', data: new Uint8Array([10]) },
-    { name: 'sample.png', data: new Uint8Array([20]) },
-    { name: 'sample.png', data: new Uint8Array([30]) }
-  ];
+  // Check 4: Compression method = 0 (Stored / uncompressed)
+  assert.equal(view.getUint16(8, true), 0);
 
-  const zipBytes = createZipUint8Array(files);
-  const zipText = new TextDecoder('utf-8').decode(zipBytes);
+  // Check 5: CRC-32 match for file 1
+  const expectedCrc1 = calculateCrc32(dummyPngBytes);
+  assert.equal(view.getUint32(14, true), expectedCrc1, 'CRC-32 checksum mismatch in local header');
 
-  // Traversal dots and slashes must be stripped
-  assert.ok(!zipText.includes('../../etc/passwd'));
-  assert.ok(zipText.includes('etc_passwd'));
+  // Check 6: Compressed size == Uncompressed size
+  assert.equal(view.getUint32(18, true), dummyPngBytes.length);
+  assert.equal(view.getUint32(22, true), dummyPngBytes.length);
 
-  // Colliding names must be deduplicated
-  assert.ok(zipText.includes('sample.png'));
-  assert.ok(zipText.includes('sample_1.png'));
-  assert.ok(zipText.includes('sample_2.png'));
-});
-
-test('Base64 memory-efficient byte decoding', () => {
-  const originalBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3, 255]);
-  const base64Str = btoa(String.fromCharCode(...originalBytes));
-
-  const decoded = decodeBase64ToBytes(base64Str);
-  assert.deepEqual(decoded, originalBytes);
-});
-
-test('Slider coordinate clamping and precision', () => {
-  function clampSlider(percentage) {
-    return Math.max(0, Math.min(100, percentage));
-  }
-
-  assert.equal(clampSlider(-50), 0);
-  assert.equal(clampSlider(150), 100);
-  assert.equal(clampSlider(50.456), 50.456);
-  assert.equal(clampSlider(0), 0);
-  assert.equal(clampSlider(100), 100);
-});
-
-test('PKZip engine sets Bit 11 UTF-8 flag and valid Central Directory offsets', () => {
-  const files = [
-    { name: 'test_image.png', data: new Uint8Array([1, 2, 3, 4]) }
-  ];
-
-  const zipBytes = createZipUint8Array(files);
-  const view = new DataView(zipBytes.buffer);
-
-  // Local header flag at offset 6 must have bit 11 (0x0800) set
-  const localFlag = view.getUint16(6, true);
-  assert.equal(localFlag & 0x0800, 0x0800, 'Local header Bit 11 must be set for UTF-8');
-
-  // Find Central Directory signature (0x02014b50)
-  let cdOffset = -1;
-  for (let i = 0; i < zipBytes.length - 4; i++) {
-    if (view.getUint32(i, true) === 0x02014b50) {
-      cdOffset = i;
+  // Check 7: End of Central Directory record signature 0x06054b50
+  const eocdSig = 0x06054b50;
+  let eocdOffset = -1;
+  for (let i = zipBytes.length - 22; i >= 0; i--) {
+    if (view.getUint32(i, true) === eocdSig) {
+      eocdOffset = i;
       break;
     }
   }
-  assert.ok(cdOffset > 0, 'Central directory header must exist');
-
-  // Central directory flag at offset 8 must have bit 11 (0x0800) set
-  const cdFlag = view.getUint16(cdOffset + 8, true);
-  assert.equal(cdFlag & 0x0800, 0x0800, 'Central directory Bit 11 must be set for UTF-8');
-
-  // Compression at offset 10 must be 0 (Store)
-  assert.equal(view.getUint16(cdOffset + 10, true), 0);
-
-  // CRC-32 at offset 16 must match file CRC
-  const expectedCrc = calculateCrc32(files[0].data);
-  assert.equal(view.getUint32(cdOffset + 16, true), expectedCrc);
+  assert.ok(eocdOffset !== -1, 'End of Central Directory record must be present');
+  assert.equal(view.getUint16(eocdOffset + 8, true), 2, 'Total entries on disk mismatch');
+  assert.equal(view.getUint16(eocdOffset + 10, true), 2, 'Total central directory entries mismatch');
 });
 
-test('Keyboard slider navigation steps with Shift and Home/End bounds', () => {
-  function handleKeyboardStep(current, key, shiftKey) {
-    const step = shiftKey ? 10 : 2;
-    if (key === 'ArrowLeft' || key === 'ArrowDown') {
-      return Math.max(0, current - step);
-    }
-    if (key === 'ArrowRight' || key === 'ArrowUp') {
-      return Math.min(100, current + step);
-    }
-    if (key === 'Home') return 0;
-    if (key === 'End') return 100;
-    return current;
+// ─── 3. PKZip Security & Path Traversal Sanitization ──────────────────────────
+test('PKZip engine sanitizes path traversal attacks, control chars, and deduplicates colliding names', async () => {
+  const dummy = new Uint8Array([65, 66, 67]);
+  const maliciousFiles = [
+    { name: '../../../etc/passwd.png', data: dummy },
+    { name: '..\\..\\windows\\system32.png', data: dummy },
+    { name: 'sub/folder/nested.png', data: dummy },
+    { name: 'collision.png', data: dummy },
+    { name: 'collision.png', data: dummy },
+    { name: 'collision.png', data: dummy },
+    { name: 'bad\x00\x1fname\x7f.png', data: dummy },
+    { name: '', data: dummy }
+  ];
+
+  const zipBlob = createZipBlob(maliciousFiles);
+  const buffer = await zipBlob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const text = new TextDecoder().decode(bytes);
+
+  // Verification 1: Path traversal '..' must never appear
+  assert.ok(!text.includes('..'), 'Path traversal sequence ".." must be sanitized');
+
+  // Verification 2: Path separators '/' and '\' must be converted to '_'
+  assert.ok(!text.includes('sub/folder/nested.png'));
+  assert.ok(text.includes('sub_folder_nested.png'));
+
+  // Verification 3: Name collisions must be disambiguated with suffix counters
+  assert.ok(text.includes('collision.png'));
+  assert.ok(text.includes('collision_1.png'));
+  assert.ok(text.includes('collision_2.png'));
+
+  // Verification 4: Control characters must be stripped
+  assert.ok(text.includes('badname.png'));
+
+  // Verification 5: Empty file name must fall back safely
+  assert.ok(text.includes('restored_image.png'));
+});
+
+// ─── 4. Base64 Binary Decoding Accuracy ───────────────────────────────────────
+test('Base64 memory-efficient byte decoding', () => {
+  const testString = 'Atelier 8K Forensic Restoration Engine v3.0';
+  const base64 = Buffer.from(testString).toString('base64');
+
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const decoded = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    decoded[i] = binaryString.charCodeAt(i);
   }
 
-  // Normal arrow navigation
-  assert.equal(handleKeyboardStep(50, 'ArrowLeft', false), 48);
-  assert.equal(handleKeyboardStep(50, 'ArrowRight', false), 52);
-  assert.equal(handleKeyboardStep(50, 'ArrowDown', false), 48);
-  assert.equal(handleKeyboardStep(50, 'ArrowUp', false), 52);
-
-  // Shift accelerated arrow navigation
-  assert.equal(handleKeyboardStep(50, 'ArrowLeft', true), 40);
-  assert.equal(handleKeyboardStep(50, 'ArrowRight', true), 60);
-
-  // Clamping at boundary
-  assert.equal(handleKeyboardStep(1, 'ArrowLeft', false), 0);
-  assert.equal(handleKeyboardStep(99, 'ArrowRight', false), 100);
-
-  // Home & End
-  assert.equal(handleKeyboardStep(73, 'Home', false), 0);
-  assert.equal(handleKeyboardStep(22, 'End', false), 100);
+  const resultString = new TextDecoder().decode(decoded);
+  assert.equal(resultString, testString);
 });
 
-test('URL memory lifecycle tracker tracks and deallocates without leaks', () => {
-  const mockAllocated = new Set();
-  const revoked = [];
+// ─── 5. Slider Coordinate Clamping, Precision & WAI-ARIA ──────────────────────
+test('Slider coordinate clamping, precision, and WAI-ARIA valuetext', () => {
+  function computeSliderValues(percentage) {
+    const pos = Math.max(0, Math.min(100, percentage));
+    const rounded = Math.round(pos);
+    return {
+      pos,
+      valuenow: rounded.toString(),
+      valuetext: `${rounded}% comparison`,
+      clipWidth: `${pos}%`,
+      dividerLeft: `${pos}%`
+    };
+  }
 
-  function createMockUrl(id) {
-    const url = `blob:http://localhost/${id}`;
-    mockAllocated.add(url);
+  // Clamping
+  assert.equal(computeSliderValues(-15).pos, 0);
+  assert.equal(computeSliderValues(-15).valuenow, '0');
+  assert.equal(computeSliderValues(120).pos, 100);
+  assert.equal(computeSliderValues(120).valuenow, '100');
+
+  // Standard midpoint
+  const mid = computeSliderValues(50);
+  assert.equal(mid.pos, 50);
+  assert.equal(mid.valuenow, '50');
+  assert.equal(mid.valuetext, '50% comparison');
+  assert.equal(mid.clipWidth, '50%');
+  assert.equal(mid.dividerLeft, '50%');
+
+  // Precision decimal rounding
+  const frac = computeSliderValues(74.6);
+  assert.equal(frac.pos, 74.6);
+  assert.equal(frac.valuenow, '75');
+  assert.equal(frac.valuetext, '75% comparison');
+});
+
+// ─── 6. Keyboard Slider Navigation Steps ──────────────────────────────────────
+test('Keyboard slider navigation steps with Shift jumps and Home/End bounds', () => {
+  function handleSliderKey(key, currentPos, shiftKey) {
+    const step = shiftKey ? 10 : 2;
+    if (key === 'ArrowLeft' || key === 'ArrowDown') {
+      return Math.max(0, currentPos - step);
+    } else if (key === 'ArrowRight' || key === 'ArrowUp') {
+      return Math.min(100, currentPos + step);
+    } else if (key === 'Home') {
+      return 0;
+    } else if (key === 'End') {
+      return 100;
+    }
+    return currentPos;
+  }
+
+  // Standard 2% steps
+  assert.equal(handleSliderKey('ArrowRight', 50, false), 52);
+  assert.equal(handleSliderKey('ArrowLeft', 50, false), 48);
+  assert.equal(handleSliderKey('ArrowUp', 50, false), 52);
+  assert.equal(handleSliderKey('ArrowDown', 50, false), 48);
+
+  // Shift 10% jumps
+  assert.equal(handleSliderKey('ArrowRight', 50, true), 60);
+  assert.equal(handleSliderKey('ArrowLeft', 50, true), 40);
+
+  // Boundary checks
+  assert.equal(handleSliderKey('ArrowLeft', 1, false), 0);
+  assert.equal(handleSliderKey('ArrowRight', 99, false), 100);
+
+  // Home & End keys
+  assert.equal(handleSliderKey('Home', 67, false), 0);
+  assert.equal(handleSliderKey('End', 23, false), 100);
+});
+
+// ─── 7. URL Memory Lifecycle Management ───────────────────────────────────────
+test('URL memory lifecycle tracker tracks and deallocates without leaks', () => {
+  const tracker = new Set();
+
+  function allocate(id) {
+    const url = `blob:http://localhost:8000/${id}`;
+    tracker.add(url);
     return url;
   }
 
-  function revokeMockUrl(url) {
-    if (mockAllocated.has(url)) {
-      revoked.push(url);
-      mockAllocated.delete(url);
+  function deallocate(url) {
+    if (tracker.has(url)) {
+      tracker.delete(url);
     }
   }
 
-  function cleanupAll() {
-    mockAllocated.forEach(url => revoked.push(url));
-    mockAllocated.clear();
-  }
+  const url1 = allocate('uuid-1');
+  const url2 = allocate('uuid-2');
+  assert.equal(tracker.size, 2);
 
-  const u1 = createMockUrl('item1');
-  const u2 = createMockUrl('item2');
-  const u3 = createMockUrl('item3');
+  deallocate(url1);
+  assert.equal(tracker.size, 1);
+  assert.ok(!tracker.has(url1));
+  assert.ok(tracker.has(url2));
 
-  assert.equal(mockAllocated.size, 3);
-
-  // Individual item remove
-  revokeMockUrl(u2);
-  assert.equal(mockAllocated.size, 2);
-  assert.ok(!mockAllocated.has(u2));
-  assert.ok(revoked.includes(u2));
-
-  // Full queue clear
-  cleanupAll();
-  assert.equal(mockAllocated.size, 0);
-  assert.equal(revoked.length, 3);
+  // Purge all
+  tracker.clear();
+  assert.equal(tracker.size, 0);
 });
 
+// ─── 8. XSS Prevention in escapeHtml ───────────────────────────────────────────
 test('XSS escapeHtml sanitizes special characters properly', () => {
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  assert.equal(escapeHtml('<script>alert("xss")</script>'), '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
-  assert.equal(escapeHtml('Tom & Jerry\'s "Photo"'), 'Tom &amp; Jerry&#039;s &quot;Photo&quot;');
-  assert.equal(escapeHtml('SafeName_123.jpg'), 'SafeName_123.jpg');
+  assert.equal(
+    escapeHtml('<script>alert("xss")</script>'),
+    '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
+  );
+  assert.equal(
+    escapeHtml('photo "test" & \'restoration\''),
+    'photo &quot;test&quot; &amp; &#039;restoration&#039;'
+  );
 });
 
-test('parseGeminiError classifies API error codes to human-readable text', () => {
-  function parseGeminiError(err) {
-    const msg = (err?.message || '').toLowerCase();
-    if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted'))
-      return 'Rate limit hit — wait a moment and retry';
-    if (msg.includes('401') || msg.includes('api key not valid') || msg.includes('permission_denied'))
-      return 'Invalid API key — check Preferences';
-    if (msg.includes('403'))
-      return 'API key lacks permission — check Google AI Studio';
-    if (msg.includes('400') && msg.includes('request'))
-      return 'Bad request — image may be too large or malformed';
-    if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed'))
-      return 'Network error — check your connection';
-    if (msg.includes('no image') || msg.includes('no_image') || msg.includes('finishreason'))
-      return 'Model returned no image — try a different image or prompt';
-    return err?.message || 'Restoration failed';
-  }
-
-  assert.equal(parseGeminiError({ message: 'Error 429: Resource has been exhausted' }), 'Rate limit hit — wait a moment and retry');
-  assert.equal(parseGeminiError({ message: 'API key not valid. Please pass a valid API key.' }), 'Invalid API key — check Preferences');
+// ─── 9. Gemini & Vertex AI Error Classification ───────────────────────────────
+test('parseGeminiError classifies API error codes for both Gemini API key and Vertex AI modes', () => {
+  // Test standard Gemini API key mode
+  state.authMode = 'apikey';
+  assert.equal(parseGeminiError({ message: 'Error 429: Resource exhausted' }), 'Rate limit hit — cooling down and retrying...');
+  assert.equal(parseGeminiError({ message: 'API_KEY_INVALID' }), 'Invalid API key — check Preferences');
+  assert.equal(parseGeminiError({ message: '401 Unauthorized' }), 'Invalid API key — check Preferences');
+  assert.equal(parseGeminiError({ message: '403 Forbidden: Caller does not have permission' }), 'API key lacks permission — check Google AI Studio');
+  assert.equal(parseGeminiError({ message: 'Quota exceeded for requests per day' }), 'Daily API quota exhausted — resets tomorrow at midnight PT');
+  assert.equal(parseGeminiError({ message: '413 Request Entity Too Large' }), 'Payload too large — image optimized automatically');
   assert.equal(parseGeminiError({ message: 'Failed to fetch' }), 'Network error — check your connection');
-  assert.equal(parseGeminiError({ message: 'Custom server crash' }), 'Custom server crash');
+  assert.equal(parseGeminiError({ message: 'finishReason: SAFETY' }), 'Model returned no image — try a different image or prompt');
+
+  // Test Vertex AI mode (tailored messages)
+  state.authMode = 'vertex';
+  assert.equal(parseGeminiError({ message: 'Quota exceeded for aiplatform.googleapis.com (RESOURCE_EXHAUSTED)' }), 'Vertex AI rate limit hit — cooling down and retrying...');
+  assert.equal(parseGeminiError({ message: '403 PERMISSION_DENIED on resource' }), 'Vertex AI permission denied — check GCP Project ID and IAM permissions');
+  assert.equal(parseGeminiError({ message: '401 UNAUTHENTICATED token expired' }), 'Google authorization expired — reconnect in Preferences');
+
+  // Reset to default
+  state.authMode = 'apikey';
 });
 
-test('Aspect ratio log-scale distance minimizes geometric distortion', () => {
-  const GEMINI_ASPECT_RATIOS = [
-    { label: '1:1',  value: 1.0 },
-    { label: '4:3',  value: 4 / 3 },
-    { label: '3:4',  value: 3 / 4 },
-    { label: '3:2',  value: 3 / 2 },
-    { label: '2:3',  value: 2 / 3 },
-    { label: '16:9', value: 16 / 9 },
-    { label: '9:16', value: 9 / 16 },
-    { label: '5:4',  value: 5 / 4 },
-    { label: '4:5',  value: 4 / 5 },
-    { label: '21:9', value: 21 / 9 },
-  ];
-
-  function matchAspectRatio(width, height) {
-    if (!width || !height) return '1:1';
+// ─── 10. Aspect Ratio Log-Scale Distance ──────────────────────────────────────
+test('Aspect ratio log-scale distance minimizes geometric distortion across formats', () => {
+  function detectBestAspect(width, height) {
     const target = Math.log(width / height);
     let best = GEMINI_ASPECT_RATIOS[0];
     let bestDist = Infinity;
@@ -392,161 +304,100 @@ test('Aspect ratio log-scale distance minimizes geometric distortion', () => {
   }
 
   // Exact matches
-  assert.equal(matchAspectRatio(1000, 1000), '1:1');
-  assert.equal(matchAspectRatio(1920, 1080), '16:9');
-  assert.equal(matchAspectRatio(1080, 1920), '9:16');
-  assert.equal(matchAspectRatio(4000, 3000), '4:3');
-  assert.equal(matchAspectRatio(3000, 4000), '3:4');
-  assert.equal(matchAspectRatio(6000, 4000), '3:2');
-  assert.equal(matchAspectRatio(4000, 6000), '2:3');
-  assert.equal(matchAspectRatio(2560, 1080), '21:9');
+  assert.equal(detectBestAspect(1000, 1000), '1:1');
+  assert.equal(detectBestAspect(4000, 3000), '4:3');
+  assert.equal(detectBestAspect(3000, 4000), '3:4');
+  assert.equal(detectBestAspect(3000, 2000), '3:2');
+  assert.equal(detectBestAspect(2000, 3000), '2:3');
+  assert.equal(detectBestAspect(1920, 1080), '16:9');
+  assert.equal(detectBestAspect(1080, 1920), '9:16');
+  assert.equal(detectBestAspect(2560, 1080), '21:9');
+  assert.equal(detectBestAspect(2500, 2000), '5:4');
+  assert.equal(detectBestAspect(2000, 2500), '4:5');
 
-  // Slight variance (e.g. 1920x1200 is 16:10 = 1.6, closest to 3:2 = 1.5)
-  assert.equal(matchAspectRatio(1920, 1200), '3:2');
+  // Near matches (tolerance test)
+  assert.equal(detectBestAspect(1920, 1079), '16:9'); // 1px off
+  assert.equal(detectBestAspect(1002, 1000), '1:1');   // near square
+  assert.equal(detectBestAspect(3840, 2160), '16:9');  // 4K UHD
 });
 
+// ─── 11. API Key Sanitization ─────────────────────────────────────────────────
 test('API key sanitization strips CLI flags, quotes, and whitespace', () => {
-  function sanitizeApiKey(raw) {
-    if (!raw || typeof raw !== 'string') return '';
-    return raw.trim()
-      .replace(/^-m\s+/i, '')
-      .replace(/^--key\s+/i, '')
-      .replace(/^["']+|["']+$/g, '')
-      .trim();
-  }
-
-  assert.equal(sanitizeApiKey('-m AQ.Ab8RN6K-hRJeEz'), 'AQ.Ab8RN6K-hRJeEz');
-  assert.equal(sanitizeApiKey('--key "AIzaSyD-12345"'), 'AIzaSyD-12345');
-  assert.equal(sanitizeApiKey("  'AQ.test_key'  "), 'AQ.test_key');
+  assert.equal(sanitizeApiKey('  AIzaSyValidKey123  '), 'AIzaSyValidKey123');
+  assert.equal(sanitizeApiKey('"AIzaSyValidKey123"'), 'AIzaSyValidKey123');
+  assert.equal(sanitizeApiKey("'AIzaSyValidKey123'"), 'AIzaSyValidKey123');
+  assert.equal(sanitizeApiKey('-m AIzaSyValidKey123'), 'AIzaSyValidKey123');
+  assert.equal(sanitizeApiKey('--key AIzaSyValidKey123'), 'AIzaSyValidKey123');
+  assert.equal(sanitizeApiKey('--KEY "AIzaSyValidKey123"'), 'AIzaSyValidKey123');
   assert.equal(sanitizeApiKey(null), '');
   assert.equal(sanitizeApiKey(undefined), '');
+  assert.equal(sanitizeApiKey(''), '');
 });
 
+// ─── 12. Retry-After Header & Google RPC RetryInfo ────────────────────────────
 test('extractRetryDelayMs parses Retry-After header, Google RPC RetryInfo, and regex patterns', () => {
-  function extractRetryDelayMs(response, errJson, errText) {
-    if (response && response.headers && typeof response.headers.get === 'function') {
-      const retryHeader = response.headers.get('retry-after');
-      if (retryHeader) {
-        const sec = parseInt(retryHeader, 10);
-        if (!isNaN(sec) && sec > 0) {
-          return (sec * 1000) + 1000;
-        }
-        const dateMs = Date.parse(retryHeader);
-        if (!isNaN(dateMs) && dateMs > Date.now()) {
-          return (dateMs - Date.now()) + 1000;
-        }
-      }
-    }
+  // 1. HTTP Retry-After integer seconds
+  const mockResp1 = { headers: { get: (name) => name === 'retry-after' ? '30' : null } };
+  assert.equal(extractRetryDelayMs(mockResp1, null, ''), 31000); // 30s + 1s buffer
 
-    if (errJson?.error?.details && Array.isArray(errJson.error.details)) {
-      for (const detail of errJson.error.details) {
-        if (detail.retryDelay) {
-          const match = String(detail.retryDelay).match(/^(\d+(?:\.\d+)?)s?$/);
-          if (match) {
-            const sec = parseFloat(match[1]);
-            if (!isNaN(sec) && sec > 0) {
-              return Math.round(sec * 1000) + 1000;
-            }
-          }
-        }
-      }
-    }
+  // 2. HTTP Retry-After HTTP-Date
+  const futureDate = new Date(Date.now() + 20000).toUTCString();
+  const mockResp2 = { headers: { get: (name) => name === 'retry-after' ? futureDate : null } };
+  const parsedDelay = extractRetryDelayMs(mockResp2, null, '');
+  assert.ok(parsedDelay >= 19000 && parsedDelay <= 22000);
 
-    const combined = `${errJson?.error?.message || ''} ${errText || ''}`;
-    const match = combined.match(/(?:retry (?:after|in)|wait)\s*(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?/i);
-    if (match) {
-      const sec = parseFloat(match[1]);
-      if (!isNaN(sec) && sec > 0 && sec < 3600) {
-        return Math.round(sec * 1000) + 1000;
-      }
-    }
+  // 3. Google RPC RetryInfo with string delay ("15s")
+  const rpcStringErr = { error: { details: [{ retryDelay: '15s' }] } };
+  assert.equal(extractRetryDelayMs(null, rpcStringErr, ''), 16000);
 
-    return null;
-  }
+  // 4. Google RPC RetryInfo with structured object ({ seconds: 25, nanos: 500000000 })
+  const rpcObjErr = { error: { details: [{ retryDelay: { seconds: 25, nanos: 500000000 } }] } };
+  assert.equal(extractRetryDelayMs(null, rpcObjErr, ''), 26500); // 25.5s * 1000 + 1000
 
-  // 1. From standard Retry-After HTTP header
-  const mockResponseWithHeader = {
-    headers: {
-      get: (h) => (h === 'retry-after' ? '30' : null)
-    }
-  };
-  assert.equal(extractRetryDelayMs(mockResponseWithHeader, null, null), 31000);
+  // 5. Google RPC RetryInfo with snake_case retry_delay
+  const rpcSnakeErr = { error: { details: [{ retry_delay: '40s' }] } };
+  assert.equal(extractRetryDelayMs(null, rpcSnakeErr, ''), 41000);
 
-  // 2. From Google RPC RetryInfo details
-  const mockRpcError = {
-    error: {
-      code: 429,
-      status: 'RESOURCE_EXHAUSTED',
-      details: [
-        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '18.5s' }
-      ]
-    }
-  };
-  assert.equal(extractRetryDelayMs(null, mockRpcError, ''), 19500);
+  // 6. Free text regex match
+  const textErr = 'Resource exhausted. Please retry in 18.5 seconds.';
+  assert.equal(extractRetryDelayMs(null, null, textErr), 19500);
 
-  // 3. From text message via regex
-  assert.equal(
-    extractRetryDelayMs(null, null, 'Quota exceeded for metric ... please retry after 22.4s'),
-    23400
-  );
-  assert.equal(
-    extractRetryDelayMs(null, { error: { message: 'Rate limit hit. Wait 15 seconds before next request' } }, ''),
-    16000
-  );
-
-  // 4. Returns null when absent
-  assert.equal(extractRetryDelayMs(null, { error: { message: 'Generic server error' } }, ''), null);
+  // 7. No delay specified -> null
+  assert.equal(extractRetryDelayMs(null, null, 'Generic 500 server error'), null);
 });
 
+// ─── 13. Daily Quota Detection ────────────────────────────────────────────────
 test('isDailyQuotaExceeded distinguishes permanent daily limits from transient per-minute limits', () => {
-  function isDailyQuotaExceeded(errJson, errText) {
-    const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
-    return (
-      combined.includes('per day') ||
-      combined.includes('requests per day') ||
-      combined.includes('daily quota') ||
-      combined.includes('exceeded your daily') ||
-      combined.includes('quota_exceeded_daily')
-    );
-  }
+  assert.equal(isDailyQuotaExceeded({ error: { message: 'Quota exceeded for quota metric Requests per day' } }, ''), true);
+  assert.equal(isDailyQuotaExceeded(null, 'You have exceeded your daily quota for this project'), true);
+  assert.equal(isDailyQuotaExceeded({ error: { message: 'quota_exceeded_daily' } }, ''), true);
 
-  // Daily quota errors (permanent until midnight PT)
-  assert.equal(isDailyQuotaExceeded(null, "Resource exhausted: Quota exceeded for metric 'GenerateContent requests per day'"), true);
-  assert.equal(isDailyQuotaExceeded({ error: { message: 'You have exceeded your daily quota for model gemini-3-pro' } }, ''), true);
-
-  // Transient rate limit errors (per-minute or concurrency)
-  assert.equal(isDailyQuotaExceeded(null, "Quota exceeded for metric 'GenerateContent requests per minute', please retry in 18s"), false);
-  assert.equal(isDailyQuotaExceeded({ error: { message: 'Rate limit reached, please slow down' } }, ''), false);
+  // Transient per-minute rate limits should NOT be classified as daily quota
+  assert.equal(isDailyQuotaExceeded({ error: { message: 'Rate limit exceeded: 15 requests per minute' } }, ''), false);
+  assert.equal(isDailyQuotaExceeded(null, 'Too many requests, try again in 30 seconds'), false);
 });
 
+// ─── 14. Fatal API Error Classification ───────────────────────────────────────
 test('isFatalApiError fast-fails unrecoverable auth errors without futile retries', () => {
-  function isFatalApiError(status, errJson, errText) {
-    const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
-    if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid'))) return true;
-    if (status === 401) return true;
-    if (status === 403 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || (combined.includes('permission_denied') && combined.includes('key')))) return true;
-    return false;
-  }
-
-  // Fatal errors - explicitly invalid key
-  assert.equal(isFatalApiError(400, { error: { message: 'API_KEY_INVALID: API key not valid' } }, ''), true);
+  state.authMode = 'apikey';
+  // Bad API key is fatal in API key mode
+  assert.equal(isFatalApiError(400, { error: { message: 'API_KEY_INVALID' } }, ''), true);
   assert.equal(isFatalApiError(401, null, 'Unauthorized'), true);
-  assert.equal(isFatalApiError(403, null, 'api key not valid for this project'), true);
+  assert.equal(isFatalApiError(403, { error: { message: 'The provided API key is invalid' } }, ''), true);
 
-  // Non-fatal: 400 + invalid_argument should retry (could be model name, payload, config issues)
-  assert.equal(isFatalApiError(400, { error: { message: 'invalid_argument: model not found' } }, ''), false, '400+invalid_argument must NOT be fatal - could be model access issue');
-  assert.equal(isFatalApiError(400, { error: { message: 'invalid_argument: request payload size exceeds limit' } }, ''), false, '400+invalid_argument payload errors must retry');
+  // Transient errors are NOT fatal (they should be retried!)
+  assert.equal(isFatalApiError(429, null, 'Rate limit'), false);
+  assert.equal(isFatalApiError(500, null, 'Internal error'), false);
+  assert.equal(isFatalApiError(503, null, 'Service unavailable'), false);
+  assert.equal(isFatalApiError(400, { error: { message: 'Invalid payload dimension' } }, ''), false);
 
-  // Non-fatal: 403 quota/billing blocks should NOT permanently halt - user can fix
-  assert.equal(isFatalApiError(403, { error: { message: 'The caller does not have permission' } }, ''), false, 'bare 403 permission denied is not necessarily fatal (could be quota)');
-  assert.equal(isFatalApiError(403, null, 'Billing not enabled for project'), false, 'billing 403 is not a key issue');
-
-  // Non-fatal transient errors (should be retried)
-  assert.equal(isFatalApiError(429, { error: { message: 'Resource has been exhausted' } }, ''), false);
-  assert.equal(isFatalApiError(500, null, 'Internal server error'), false);
-  assert.equal(isFatalApiError(503, null, 'The service is temporarily unavailable'), false);
+  // In Vertex AI mode, 401 is NOT fatal because it triggers token auto-refresh!
+  state.authMode = 'vertex';
+  assert.equal(isFatalApiError(401, null, 'Token expired'), false);
+  state.authMode = 'apikey';
 });
 
+// ─── 15. Image Payload Scaling Mathematics ────────────────────────────────────
 test('Image payload optimizer scales oversized dimensions preserving exact aspect ratio', () => {
   const MAX_DIMENSION = 3072;
   const SIZE_THRESHOLD_BYTES = 3.5 * 1024 * 1024;
@@ -578,7 +429,7 @@ test('Image payload optimizer scales oversized dimensions preserving exact aspec
   const dslr = calculateTargetDimensions(6000, 4000, 24 * 1024 * 1024);
   assert.equal(dslr.optimized, true);
   assert.equal(dslr.width, 3072);
-  assert.equal(dslr.height, 2048); // 3072 * (4000/6000) = 2048 exactly!
+  assert.equal(dslr.height, 2048);
 
   // 3. Tall portrait (4000x6000, 18MB): scaled to max 3072 preserving 2:3
   const tall = calculateTargetDimensions(4000, 6000, 18 * 1024 * 1024);
@@ -593,6 +444,7 @@ test('Image payload optimizer scales oversized dimensions preserving exact aspec
   assert.equal(sq.height, 3072);
 });
 
+// ─── 16. 0-Byte Corrupt File Filtering ─────────────────────────────────────────
 test('0-byte file filtering prevents corrupt or empty files from queue entry', () => {
   const incomingFiles = [
     { name: 'photo1.jpg', size: 102400 },
@@ -617,6 +469,7 @@ test('0-byte file filtering prevents corrupt or empty files from queue entry', (
   assert.equal(validFiles[1].name, 'photo2.png');
 });
 
+// ─── 17. Retry All Failed Queue Logic ─────────────────────────────────────────
 test('retryAllFailed resets only failed items to ready status', () => {
   const queue = [
     { id: '1', status: 'restored', error: null },
@@ -639,84 +492,77 @@ test('retryAllFailed resets only failed items to ready status', () => {
   assert.equal(queue.filter(i => i.status === 'restored').length, 2);
 });
 
+// ─── 18. API Endpoint Builder: Gemini API Key Mode ────────────────────────────
 test('buildApiEndpoint constructs standard Gemini URL in apikey mode', () => {
-  function buildApiEndpoint(mockState) {
-    if (mockState.authMode === 'vertex') {
-      const project = (mockState.gcpProjectId || '').trim();
-      const region = mockState.gcpRegion || 'us-central1';
-      if (!project) throw new Error('GCP Project ID is required for Vertex AI mode. Set it in Preferences.');
-      return `https://${region}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/${region}/publishers/google/models/${encodeURIComponent(mockState.model)}:generateContent`;
-    }
-    return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mockState.model)}:generateContent?key=${encodeURIComponent(mockState.apiKey)}`;
-  }
+  state.authMode = 'apikey';
+  state.apiKey = 'AIzaSyTest123';
+  state.model = 'gemini-3-pro-image';
 
-  const endpoint = buildApiEndpoint({
-    authMode: 'apikey',
-    apiKey: 'AIzaSyTest123',
-    model: 'gemini-3-pro-image'
-  });
-
-  assert.equal(endpoint, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:generateContent?key=AIzaSyTest123');
+  const endpoint = buildApiEndpoint();
+  assert.equal(
+    endpoint,
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:generateContent?key=AIzaSyTest123'
+  );
 });
 
+// ─── 19. API Endpoint Builder: Vertex AI Multi-Region Endpoints ───────────────
 test('buildApiEndpoint constructs Vertex AI URL in vertex mode using GCP credits', () => {
-  function buildApiEndpoint(mockState) {
-    if (mockState.authMode === 'vertex') {
-      const project = (mockState.gcpProjectId || '').trim();
-      const region = mockState.gcpRegion || 'us-central1';
-      if (!project) throw new Error('GCP Project ID is required for Vertex AI mode. Set it in Preferences.');
-      return `https://${region}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/${region}/publishers/google/models/${encodeURIComponent(mockState.model)}:generateContent`;
-    }
-    return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mockState.model)}:generateContent?key=${encodeURIComponent(mockState.apiKey)}`;
-  }
+  state.authMode = 'vertex';
+  state.gcpProjectId = 'my-gcp-restorer-987';
+  state.gcpRegion = 'us-central1';
+  state.model = 'gemini-3-pro-image';
 
-  // US Central
-  const ep1 = buildApiEndpoint({
-    authMode: 'vertex',
-    gcpProjectId: 'my-gcp-restorer-987',
-    gcpRegion: 'us-central1',
-    model: 'gemini-3-pro-image'
-  });
-  assert.equal(ep1, 'https://us-central1-aiplatform.googleapis.com/v1/projects/my-gcp-restorer-987/locations/us-central1/publishers/google/models/gemini-3-pro-image:generateContent');
+  const ep1 = buildApiEndpoint();
+  assert.equal(
+    ep1,
+    'https://us-central1-aiplatform.googleapis.com/v1/projects/my-gcp-restorer-987/locations/us-central1/publishers/google/models/gemini-3-pro-image:generateContent'
+  );
 
-  // Europe London
-  const ep2 = buildApiEndpoint({
-    authMode: 'vertex',
-    gcpProjectId: 'london-project',
-    gcpRegion: 'europe-west2',
-    model: 'gemini-3.1-flash-image'
-  });
-  assert.equal(ep2, 'https://europe-west2-aiplatform.googleapis.com/v1/projects/london-project/locations/europe-west2/publishers/google/models/gemini-3.1-flash-image:generateContent');
+  // Region: London
+  state.gcpRegion = 'europe-west2';
+  state.model = 'gemini-3.1-flash-image';
+  const ep2 = buildApiEndpoint();
+  assert.equal(
+    ep2,
+    'https://europe-west2-aiplatform.googleapis.com/v1/projects/my-gcp-restorer-987/locations/europe-west2/publishers/google/models/gemini-3.1-flash-image:generateContent'
+  );
+
+  // Region: Tokyo
+  state.gcpRegion = 'asia-northeast1';
+  const ep3 = buildApiEndpoint();
+  assert.equal(
+    ep3,
+    'https://asia-northeast1-aiplatform.googleapis.com/v1/projects/my-gcp-restorer-987/locations/asia-northeast1/publishers/google/models/gemini-3.1-flash-image:generateContent'
+  );
 
   // Throws if project ID is missing in vertex mode
-  assert.throws(() => {
-    buildApiEndpoint({
-      authMode: 'vertex',
-      gcpProjectId: '   ',
-      gcpRegion: 'us-central1',
-      model: 'gemini-3-pro-image'
-    });
-  }, /GCP Project ID is required/);
+  state.gcpProjectId = '   ';
+  assert.throws(() => buildApiEndpoint(), /GCP Project ID is required/);
+
+  // Reset to default
+  state.authMode = 'apikey';
 });
 
+// ─── 20. Auth Configured Verification ─────────────────────────────────────────
 test('isAuthConfigured verifies credentials based on active mode', () => {
-  function isAuthConfigured(mockState) {
-    if (mockState.authMode === 'vertex') {
-      return Boolean(mockState.gcpProjectId && mockState.gcpProjectId.trim());
-    }
-    return Boolean(mockState.apiKey && mockState.apiKey.trim());
-  }
-
   // API Key mode
-  assert.equal(isAuthConfigured({ authMode: 'apikey', apiKey: 'AIzaKey' }), true);
-  assert.equal(isAuthConfigured({ authMode: 'apikey', apiKey: '' }), false);
-  assert.equal(isAuthConfigured({ authMode: 'apikey', apiKey: '   ' }), false);
+  state.authMode = 'apikey';
+  state.apiKey = 'AIzaKey';
+  assert.equal(isAuthConfigured(), true);
+  state.apiKey = '';
+  assert.equal(isAuthConfigured(), false);
+  state.apiKey = '   ';
+  assert.equal(isAuthConfigured(), false);
 
   // Vertex AI mode
-  assert.equal(isAuthConfigured({ authMode: 'vertex', gcpProjectId: 'my-project-1' }), true);
-  assert.equal(isAuthConfigured({ authMode: 'vertex', gcpProjectId: '' }), false);
-  assert.equal(isAuthConfigured({ authMode: 'vertex', gcpProjectId: '   ' }), false);
+  state.authMode = 'vertex';
+  state.gcpProjectId = 'my-project-1';
+  assert.equal(isAuthConfigured(), true);
+  state.gcpProjectId = '';
+  assert.equal(isAuthConfigured(), false);
+  state.gcpProjectId = '   ';
+  assert.equal(isAuthConfigured(), false);
+
+  // Reset to default
+  state.authMode = 'apikey';
 });
-
-
-

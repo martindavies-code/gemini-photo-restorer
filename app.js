@@ -15,6 +15,9 @@ const TOAST_ICONS = {
   info:    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14"><circle cx="8" cy="8" r="6.5"/><line x1="8" y1="7" x2="8" y2="11.5"/><line x1="8" y1="5" x2="8" y2="5.5"/></svg>',
 };
 
+// 1x1 transparent SVG data URI to prevent unwanted browser root requests on empty src
+const TRANSPARENT_SVG_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E";
+
 function showToast(message, type = 'info', durationMs = 4500) {
   const container = document.getElementById('toastContainer');
   if (!container) return;
@@ -206,21 +209,29 @@ function escapeHtml(str) {
 // Converts raw API error messages into user-actionable English.
 function parseGeminiError(err) {
   const msg = (err?.message || '').toLowerCase();
-  if (msg.includes('daily') && (msg.includes('quota') || msg.includes('exhausted')))
+  const isVertex = typeof state !== 'undefined' && state.authMode === 'vertex';
+
+  if ((msg.includes('daily') || msg.includes('per day')) && (msg.includes('quota') || msg.includes('exhausted') || msg.includes('limit')))
     return 'Daily API quota exhausted — resets tomorrow at midnight PT';
   if (msg.includes('429') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted'))
-    return 'Rate limit hit — cooling down and retrying...';
-  if (msg.includes('401') || msg.includes('api key not valid') || msg.includes('permission_denied') || msg.includes('api_key_invalid'))
-    return 'Invalid API key — check Preferences';
-  if (msg.includes('403'))
-    return 'API key lacks permission — check Google AI Studio';
+    return isVertex
+      ? 'Vertex AI rate limit hit — cooling down and retrying...'
+      : 'Rate limit hit — cooling down and retrying...';
+  if (msg.includes('401') || msg.includes('unauthenticated') || msg.includes('api key not valid') || msg.includes('api_key_invalid') || msg.includes('invalid api key'))
+    return isVertex
+      ? 'Google authorization expired — reconnect in Preferences'
+      : 'Invalid API key — check Preferences';
+  if (msg.includes('403') || msg.includes('permission_denied') || msg.includes('forbidden'))
+    return isVertex
+      ? 'Vertex AI permission denied — check GCP Project ID and IAM permissions'
+      : 'API key lacks permission — check Google AI Studio';
   if (msg.includes('413') || (msg.includes('400') && msg.includes('payload')))
     return 'Payload too large — image optimized automatically';
-  if (msg.includes('400') && msg.includes('request'))
-    return 'Bad request — image may be too large or malformed';
+  if (msg.includes('400') && (msg.includes('request') || msg.includes('invalid_argument')))
+    return 'Bad request — image may be too large or model parameter unsupported';
   if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed'))
     return 'Network error — check your connection';
-  if (msg.includes('no image') || msg.includes('no_image') || msg.includes('finishreason'))
+  if (msg.includes('no image') || msg.includes('no_image') || msg.includes('finishreason') || msg.includes('safety'))
     return 'Model returned no image — try a different image or prompt';
   return err?.message || 'Restoration failed';
 }
@@ -228,6 +239,7 @@ function parseGeminiError(err) {
 /**
  * Inspects HTTP response headers, Google RPC details, and error messages
  * to extract the server-requested retry delay in milliseconds.
+ * Supports string delays ("30s"), numeric seconds (30), and object shapes ({ seconds: 30, nanos: 0 }).
  * Returns null if no specific delay was provided.
  */
 function extractRetryDelayMs(response, errJson, errText) {
@@ -246,15 +258,25 @@ function extractRetryDelayMs(response, errJson, errText) {
     }
   }
 
-  // 2. Check Google RPC RetryInfo in error.details
+  // 2. Check Google RPC RetryInfo in error.details (supports string, number, and object shapes)
   if (errJson?.error?.details && Array.isArray(errJson.error.details)) {
     for (const detail of errJson.error.details) {
-      if (detail.retryDelay) {
-        const match = String(detail.retryDelay).match(/^(\d+(?:\.\d+)?)s?$/);
-        if (match) {
-          const sec = parseFloat(match[1]);
-          if (!isNaN(sec) && sec > 0) {
-            return Math.round(sec * 1000) + 1000;
+      const delayVal = detail.retryDelay || detail.retry_delay;
+      if (delayVal) {
+        if (typeof delayVal === 'object') {
+          const s = Number(delayVal.seconds || 0);
+          const n = Number(delayVal.nanos || 0);
+          const totalSec = s + (n / 1e9);
+          if (totalSec > 0 && totalSec < 3600) {
+            return Math.round(totalSec * 1000) + 1000;
+          }
+        } else {
+          const match = String(delayVal).match(/^(\d+(?:\.\d+)?)s?$/);
+          if (match) {
+            const sec = parseFloat(match[1]);
+            if (!isNaN(sec) && sec > 0 && sec < 3600) {
+              return Math.round(sec * 1000) + 1000;
+            }
           }
         }
       }
@@ -294,14 +316,15 @@ function isDailyQuotaExceeded(errJson, errText) {
  */
 function isFatalApiError(status, errJson, errText) {
   const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
+  const hasKey = combined.includes('api_key') || combined.includes('api key') || combined.includes('key');
+  const isKeyInvalid = combined.includes('api_key_invalid') || combined.includes('not valid') || combined.includes('invalid') || combined.includes('revoked') || combined.includes('suspended');
+
   // Only treat as fatal if the key itself is explicitly rejected.
-  // NOTE: Do NOT flag 'invalid_argument' as fatal — that error also fires for
-  // bad payloads, unsupported model names, and wrong generation configs.
-  // Those are user-fixable without a new key and should NOT stop the batch.
-  if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid'))) return true;
-  if (status === 401) return true;
+  if (status === 400 && hasKey && isKeyInvalid) return true;
+  // In Vertex AI mode, a 401 token expiry is auto-refreshed and retried, not fatal!
+  if (status === 401 && (typeof state === 'undefined' || state.authMode !== 'vertex')) return true;
   // 403 can mean quota block (retriable) or key suspended (fatal) — only flag fatal if key is explicitly mentioned
-  if (status === 403 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || (combined.includes('permission_denied') && combined.includes('key')))) return true;
+  if (status === 403 && (hasKey && isKeyInvalid || (combined.includes('permission_denied') && hasKey))) return true;
   return false;
 }
 
@@ -375,13 +398,34 @@ function sanitizeApiKey(raw) {
     .trim();
 }
 
+// Safe Storage wrapper (isomorphic: browser, worker, or test runner)
+const safeStorage = {
+  getItem: (key) => {
+    try {
+      return (typeof localStorage !== 'undefined' && localStorage) ? localStorage.getItem(key) : null;
+    } catch (_) { return null; }
+  },
+  setItem: (key, val) => {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem(key, val);
+    } catch (_) {}
+  },
+  removeItem: (key) => {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) localStorage.removeItem(key);
+    } catch (_) {}
+  }
+};
+
+const getEl = (id) => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+
 // Application State
 const state = {
-  apiKey: sanitizeApiKey(localStorage.getItem('lumina_api_key')),
-  model: localStorage.getItem('lumina_model') || 'gemini-3-pro-image',
-  resolution: localStorage.getItem('lumina_res') || '4K',
-  aspectRatio: localStorage.getItem('lumina_aspect') || 'auto',
-  prompt: localStorage.getItem('lumina_prompt') || DEFAULT_PROMPT,
+  apiKey: sanitizeApiKey(safeStorage.getItem('lumina_api_key')),
+  model: safeStorage.getItem('lumina_model') || 'gemini-3-pro-image',
+  resolution: safeStorage.getItem('lumina_res') || '4K',
+  aspectRatio: safeStorage.getItem('lumina_aspect') || 'auto',
+  prompt: safeStorage.getItem('lumina_prompt') || DEFAULT_PROMPT,
   dirHandle: null,
   fullsizeHandle: null,
   filesQueue: [], // Array of { id, file, originalUrl, restoredUrl, restoredBlob, status, duration, error }
@@ -393,80 +437,80 @@ const state = {
   rateLimitResetUntil: 0,
   consecutiveRateLimits: 0,
   // Vertex AI (OAuth mode)
-  authMode: localStorage.getItem('lumina_auth_mode') || 'apikey', // 'apikey' | 'vertex'
-  gcpProjectId: localStorage.getItem('lumina_gcp_project') || '',
-  gcpRegion: localStorage.getItem('lumina_gcp_region') || 'us-central1',
-  gcpCustomClientId: localStorage.getItem('lumina_gcp_client_id') || '',
-  gcpManualToken: localStorage.getItem('lumina_gcp_token') || '',
+  authMode: safeStorage.getItem('lumina_auth_mode') || 'apikey', // 'apikey' | 'vertex'
+  gcpProjectId: safeStorage.getItem('lumina_gcp_project') || '',
+  gcpRegion: safeStorage.getItem('lumina_gcp_region') || 'us-central1',
+  gcpCustomClientId: safeStorage.getItem('lumina_gcp_client_id') || '',
+  gcpManualToken: safeStorage.getItem('lumina_gcp_token') || '',
   vertexToken: null,       // Current OAuth access token
   vertexTokenExpiry: 0,    // Token expiry timestamp (ms)
   vertexUserEmail: null    // Signed-in email for display
 };
 
-// DOM Elements
+// DOM Elements (dynamic getters provide safe access across browser lifecycle and Node test harnesses)
 const el = {
-  step1: document.getElementById('stepIndicator1'),
-  step2: document.getElementById('stepIndicator2'),
-  step3: document.getElementById('stepIndicator3'),
-  pickFolderBtn: document.getElementById('pickFolderBtn'),
-  reopenFolderBtn: document.getElementById('reopenFolderBtn'),
-  pickFilesBtn: document.getElementById('pickFilesBtn'),
-  fallbackFolderInput: document.getElementById('fallbackFolderInput'),
-  fallbackFilesInput: document.getElementById('fallbackFilesInput'),
-  startBatchBtn: document.getElementById('startBatchBtn'),
-  stopBatchBtn: document.getElementById('stopBatchBtn'),
-  currentFolderLabel: document.getElementById('currentFolderLabel'),
-  outputFolderLabel: document.getElementById('outputFolderLabel'),
-  progressSection: document.getElementById('progressSection'),
-  progressText: document.getElementById('progressText'),
-  progressPercent: document.getElementById('progressPercent'),
-  progressBar: document.getElementById('progressBar'),
-  dropzoneContainer: document.getElementById('dropzoneContainer'),
-  dropzoneBox: document.getElementById('dropzoneBox'),
-  dropzoneFolderBtn: document.getElementById('dropzoneFolderBtn'),
-  queueSection: document.getElementById('queueSection'),
-  queueCount: document.getElementById('queueCount'),
-  galleryGrid: document.getElementById('galleryGrid'),
-  clearAllBtn: document.getElementById('clearAllBtn'),
-  retryFailedBtn: document.getElementById('retryFailedBtn'),
-  failedCount: document.getElementById('failedCount'),
-  downloadZipBtn: document.getElementById('downloadZipBtn'),
-  openSettingsBtn: document.getElementById('openSettingsBtn'),
-  settingsDialog: document.getElementById('settingsDialog'),
-  closeSettingsBtn: document.getElementById('closeSettingsBtn'),
-  saveSettingsBtn: document.getElementById('saveSettingsBtn'),
-  apiKeyInput: document.getElementById('apiKeyInput'),
-  modelSelect: document.getElementById('modelSelect'),
-  resolutionSelect: document.getElementById('resolutionSelect'),
-  aspectRatioSelect: document.getElementById('aspectRatioSelect'),
-  promptInput: document.getElementById('promptInput'),
-  resetPromptBtn: document.getElementById('resetPromptBtn'),
-  activeModelLabel: document.getElementById('activeModelLabel'),
-  compareDialog: document.getElementById('compareDialog'),
-  closeCompareBtn: document.getElementById('closeCompareBtn'),
-  compareFilename: document.getElementById('compareFilename'),
-  compareAspectBadge: document.getElementById('compareAspectBadge'),
-  beforeImg: document.getElementById('beforeImg'),
-  afterImg: document.getElementById('afterImg'),
-  afterWrapper: document.getElementById('afterWrapper'),
-  splitDivider: document.getElementById('splitDivider'),
-  sliderContainer: document.getElementById('sliderContainer'),
-  downloadRestoredBtn: document.getElementById('downloadRestoredBtn'),
-  apiKeyStatus: document.getElementById('apiKeyStatus'),
-  onboardingAddKeyBtn: document.getElementById('onboardingAddKeyBtn'),
-  dropzoneFilesBtn: document.getElementById('dropzoneFilesBtn'),
-  authTabApiKey: document.getElementById('authTabApiKey'),
-  authTabGoogle: document.getElementById('authTabGoogle'),
-  authPanelApiKey: document.getElementById('authPanelApiKey'),
-  authPanelVertex: document.getElementById('authPanelVertex'),
-  gcpProjectId: document.getElementById('gcpProjectId'),
-  gcpRegionSelect: document.getElementById('gcpRegionSelect'),
-  gcpClientIdInput: document.getElementById('gcpClientIdInput'),
-  gcpAccessTokenInput: document.getElementById('gcpAccessTokenInput'),
-  vertexAuthStatus: document.getElementById('vertexAuthStatus'),
-  vertexAuthStatusText: document.getElementById('vertexAuthStatusText'),
-  vertexSignInBtn: document.getElementById('vertexSignInBtn'),
-  vertexSignOutBtn: document.getElementById('vertexSignOutBtn')
+  get step1() { return getEl('stepIndicator1'); },
+  get step2() { return getEl('stepIndicator2'); },
+  get step3() { return getEl('stepIndicator3'); },
+  get pickFolderBtn() { return getEl('pickFolderBtn'); },
+  get reopenFolderBtn() { return getEl('reopenFolderBtn'); },
+  get pickFilesBtn() { return getEl('pickFilesBtn'); },
+  get fallbackFolderInput() { return getEl('fallbackFolderInput'); },
+  get fallbackFilesInput() { return getEl('fallbackFilesInput'); },
+  get startBatchBtn() { return getEl('startBatchBtn'); },
+  get stopBatchBtn() { return getEl('stopBatchBtn'); },
+  get currentFolderLabel() { return getEl('currentFolderLabel'); },
+  get outputFolderLabel() { return getEl('outputFolderLabel'); },
+  get progressSection() { return getEl('progressSection'); },
+  get progressText() { return getEl('progressText'); },
+  get progressPercent() { return getEl('progressPercent'); },
+  get progressBar() { return getEl('progressBar'); },
+  get dropzoneContainer() { return getEl('dropzoneContainer'); },
+  get dropzoneBox() { return getEl('dropzoneBox'); },
+  get dropzoneFolderBtn() { return getEl('dropzoneFolderBtn'); },
+  get queueSection() { return getEl('queueSection'); },
+  get queueCount() { return getEl('queueCount'); },
+  get galleryGrid() { return getEl('galleryGrid'); },
+  get clearAllBtn() { return getEl('clearAllBtn'); },
+  get retryFailedBtn() { return getEl('retryFailedBtn'); },
+  get failedCount() { return getEl('failedCount'); },
+  get downloadZipBtn() { return getEl('downloadZipBtn'); },
+  get openSettingsBtn() { return getEl('openSettingsBtn'); },
+  get settingsDialog() { return getEl('settingsDialog'); },
+  get closeSettingsBtn() { return getEl('closeSettingsBtn'); },
+  get saveSettingsBtn() { return getEl('saveSettingsBtn'); },
+  get apiKeyInput() { return getEl('apiKeyInput'); },
+  get modelSelect() { return getEl('modelSelect'); },
+  get resolutionSelect() { return getEl('resolutionSelect'); },
+  get aspectRatioSelect() { return getEl('aspectRatioSelect'); },
+  get promptInput() { return getEl('promptInput'); },
+  get resetPromptBtn() { return getEl('resetPromptBtn'); },
+  get activeModelLabel() { return getEl('activeModelLabel'); },
+  get compareDialog() { return getEl('compareDialog'); },
+  get closeCompareBtn() { return getEl('closeCompareBtn'); },
+  get compareFilename() { return getEl('compareFilename'); },
+  get compareAspectBadge() { return getEl('compareAspectBadge'); },
+  get beforeImg() { return getEl('beforeImg'); },
+  get afterImg() { return getEl('afterImg'); },
+  get afterWrapper() { return getEl('afterWrapper'); },
+  get splitDivider() { return getEl('splitDivider'); },
+  get sliderContainer() { return getEl('sliderContainer'); },
+  get downloadRestoredBtn() { return getEl('downloadRestoredBtn'); },
+  get apiKeyStatus() { return getEl('apiKeyStatus'); },
+  get onboardingAddKeyBtn() { return getEl('onboardingAddKeyBtn'); },
+  get dropzoneFilesBtn() { return getEl('dropzoneFilesBtn'); },
+  get authTabApiKey() { return getEl('authTabApiKey'); },
+  get authTabGoogle() { return getEl('authTabGoogle'); },
+  get authPanelApiKey() { return getEl('authPanelApiKey'); },
+  get authPanelVertex() { return getEl('authPanelVertex'); },
+  get gcpProjectId() { return getEl('gcpProjectId'); },
+  get gcpRegionSelect() { return getEl('gcpRegionSelect'); },
+  get gcpClientIdInput() { return getEl('gcpClientIdInput'); },
+  get gcpAccessTokenInput() { return getEl('gcpAccessTokenInput'); },
+  get vertexAuthStatus() { return getEl('vertexAuthStatus'); },
+  get vertexAuthStatusText() { return getEl('vertexAuthStatusText'); },
+  get vertexSignInBtn() { return getEl('vertexSignInBtn'); },
+  get vertexSignOutBtn() { return getEl('vertexSignOutBtn'); }
 };
 
 // CRC-32 Lookup Table for standard ZIP compliance
@@ -610,13 +654,17 @@ function initApp() {
   // 6. Query local config in background (only when running on localhost)
   tryFetchLocalConfig().catch(() => {});
 
-  window.addEventListener('beforeunload', cleanupAllUrls);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', cleanupAllUrls);
+  }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
-} else {
-  initApp();
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
 }
 
 // Sync local API key from server if running through server.py
@@ -665,8 +713,13 @@ function setupDialogBackdropDismiss() {
     dialog.addEventListener('click', (e) => {
       if (e.target === dialog) closeDialog(dialog);
     });
-    // Restore focus when dialog is closed via Escape key
+    // Restore focus when dialog is closed via Escape key or close()
     dialog.addEventListener('close', () => {
+      if (dialog === el.compareDialog) {
+        if (el.beforeImg) el.beforeImg.src = TRANSPARENT_SVG_PLACEHOLDER;
+        if (el.afterImg) el.afterImg.src = TRANSPARENT_SVG_PLACEHOLDER;
+        state.activeCompareItem = null;
+      }
       const returnEl = dialogFocusReturn.get(dialog);
       if (returnEl && typeof returnEl.focus === 'function') {
         requestAnimationFrame(() => returnEl.focus());
@@ -1089,7 +1142,7 @@ function clearQueue() {
   confirmToast.setAttribute('role', 'alertdialog');
   confirmToast.setAttribute('aria-label', `Remove all ${count} images from queue?`);
   confirmToast.innerHTML = `
-    <span class="toast-icon" aria-hidden="true">⚠</span>
+    <span class="toast-icon" aria-hidden="true">${TOAST_ICONS.warning}</span>
     <span class="toast-message">Remove all <strong>${count}</strong> image${count !== 1 ? 's' : ''} from the queue?</span>
     <div class="toast-actions">
       <button type="button" class="toast-btn-confirm">Clear All</button>
@@ -1143,14 +1196,18 @@ function renderQueue() {
     }
   }
 
-  // 3. Append cards for new items (preserve existing ones in place to avoid flicker)
+  // 3. Append cards for new items in a single DocumentFragment batch to eliminate layout thrashing
+  const fragment = document.createDocumentFragment();
   state.filesQueue.forEach(item => {
     const existing = el.galleryGrid.querySelector(`[data-item-id="${item.id}"]`);
     if (!existing) {
       const card = createCardElement(item);
-      el.galleryGrid.appendChild(card);
+      fragment.appendChild(card);
     }
   });
+  if (fragment.childNodes.length > 0) {
+    el.galleryGrid.appendChild(fragment);
+  }
 
   const hasRestored = state.filesQueue.some(i => i.status === 'restored');
   el.downloadZipBtn.style.display = hasRestored ? 'inline-flex' : 'none';
@@ -1401,7 +1458,7 @@ async function startBatchProcessing() {
     const onCountdown = (sec) => {
       item.status = 'cooldown';
       updateCardStatus(item, `Cooling down (${sec}s)...`);
-      updateProgress(processed, total, `⏳ Rate limit active · waiting ${sec}s (${item.file.name})...`, batchStartTime);
+      updateProgress(processed, total, `Rate limit active · pacing request in ${sec}s (${item.file.name})...`, batchStartTime);
       announceToScreenReader(`Rate limit cooldown. Waiting ${sec} seconds.`);
     };
 
@@ -1578,103 +1635,109 @@ async function prepareImagePayload(file, signal = null) {
   let height = 0;
   let bitmap = null;
 
-  if (typeof createImageBitmap === 'function') {
-    try {
-      bitmap = await createImageBitmap(file);
-      width = bitmap.width;
-      height = bitmap.height;
-    } catch (_) {
-      bitmap = null;
+  try {
+    if (typeof createImageBitmap === 'function') {
+      try {
+        bitmap = await createImageBitmap(file);
+        width = bitmap.width;
+        height = bitmap.height;
+      } catch (_) {
+        bitmap = null;
+      }
     }
-  }
 
-  if (!width || !height) {
-    try {
-      const dims = await new Promise((resolve, reject) => {
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-        img.onload = () => {
-          const res = { width: img.naturalWidth, height: img.naturalHeight };
-          URL.revokeObjectURL(url);
-          resolve(res);
-        };
-        img.onerror = () => {
-          URL.revokeObjectURL(url);
-          reject(new Error('Failed to decode image'));
-        };
-        img.src = url;
-      });
-      width = dims.width;
-      height = dims.height;
-    } catch (e) {
-      console.warn('Could not inspect image dimensions, passing directly:', e);
+    if (!width || !height) {
+      try {
+        const dims = await new Promise((resolve, reject) => {
+          const img = new Image();
+          const url = URL.createObjectURL(file);
+          img.onload = () => {
+            const res = { width: img.naturalWidth, height: img.naturalHeight };
+            URL.revokeObjectURL(url);
+            resolve(res);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('Failed to decode image'));
+          };
+          img.src = url;
+        });
+        width = dims.width;
+        height = dims.height;
+      } catch (e) {
+        console.warn('Could not inspect image dimensions, passing directly:', e);
+        const base64Data = await fileToBase64(file);
+        return { base64Data, mimeType: file.type || 'image/jpeg' };
+      }
+    }
+
+    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+      needsOptimization = true;
+    }
+
+    if (!needsOptimization) {
+      if (bitmap) {
+        try { bitmap.close(); } catch (_) {}
+        bitmap = null;
+      }
       const base64Data = await fileToBase64(file);
       return { base64Data, mimeType: file.type || 'image/jpeg' };
     }
-  }
 
-  if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-    needsOptimization = true;
-  }
+    const maxSide = Math.max(width, height);
+    const scale = maxSide > MAX_DIMENSION ? (MAX_DIMENSION / maxSide) : 1;
+    const targetW = Math.max(1, Math.round(width * scale));
+    const targetH = Math.max(1, Math.round(height * scale));
 
-  if (!needsOptimization) {
-    if (bitmap) bitmap.close();
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d', { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      if (bitmap) {
+        ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+        bitmap.close();
+        bitmap = null;
+      } else {
+        const img = await new Promise((resolve, reject) => {
+          const image = new Image();
+          const url = URL.createObjectURL(file);
+          image.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(image);
+          };
+          image.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('Image load failed for canvas'));
+          };
+          image.src = url;
+        });
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+      }
+
+      const optimizedBlob = await new Promise((resolve) => {
+        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.94);
+      });
+
+      if (optimizedBlob) {
+        const base64Data = await fileToBase64(optimizedBlob);
+        console.info(`[Optimizer] Compressed ${file.name} from ${(file.size / 1024 / 1024).toFixed(1)}MB down to ${(optimizedBlob.size / 1024 / 1024).toFixed(2)}MB (${targetW}x${targetH})`);
+        return { base64Data, mimeType: 'image/jpeg' };
+      }
+    } catch (err) {
+      console.warn('[Optimizer] Canvas scaling failed, falling back to original file:', err);
+    }
+
     const base64Data = await fileToBase64(file);
     return { base64Data, mimeType: file.type || 'image/jpeg' };
-  }
-
-  const maxSide = Math.max(width, height);
-  const scale = maxSide > MAX_DIMENSION ? (MAX_DIMENSION / maxSide) : 1;
-  const targetW = Math.max(1, Math.round(width * scale));
-  const targetH = Math.max(1, Math.round(height * scale));
-
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext('2d', { alpha: false });
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-
-    if (bitmap) {
-      ctx.drawImage(bitmap, 0, 0, targetW, targetH);
-      bitmap.close();
-      bitmap = null;
-    } else {
-      const img = await new Promise((resolve, reject) => {
-        const image = new Image();
-        const url = URL.createObjectURL(file);
-        image.onload = () => {
-          URL.revokeObjectURL(url);
-          resolve(image);
-        };
-        image.onerror = () => {
-          URL.revokeObjectURL(url);
-          reject(new Error('Image load failed for canvas'));
-        };
-        image.src = url;
-      });
-      ctx.drawImage(img, 0, 0, targetW, targetH);
-    }
-
-    const optimizedBlob = await new Promise((resolve) => {
-      canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.94);
-    });
-
-    if (optimizedBlob) {
-      const base64Data = await fileToBase64(optimizedBlob);
-      console.info(`[Optimizer] Compressed ${file.name} from ${(file.size / 1024 / 1024).toFixed(1)}MB down to ${(optimizedBlob.size / 1024 / 1024).toFixed(2)}MB (${targetW}x${targetH})`);
-      return { base64Data, mimeType: 'image/jpeg' };
-    }
-  } catch (err) {
-    console.warn('[Optimizer] Canvas scaling failed, falling back to original file:', err);
+  } finally {
     if (bitmap) {
       try { bitmap.close(); } catch (_) {}
     }
   }
-
-  const base64Data = await fileToBase64(file);
-  return { base64Data, mimeType: file.type || 'image/jpeg' };
 }
 
 // Call Gemini 3 Pro Image API with Memory-Efficient Binary Decoding,
@@ -1908,41 +1971,70 @@ function setSliderPosition(percentage) {
   const pos = Math.max(0, Math.min(100, percentage));
   el.afterWrapper.style.width = `${pos}%`;
   el.splitDivider.style.left = `${pos}%`;
-  el.sliderContainer.setAttribute('aria-valuenow', Math.round(pos).toString());
+  const rounded = Math.round(pos);
+  el.sliderContainer.setAttribute('aria-valuenow', rounded.toString());
+  el.sliderContainer.setAttribute('aria-valuetext', `${rounded}% comparison`);
 }
 
 function setupSplitSlider() {
   let isDragging = false;
+  let cachedRect = null;
+  let rafId = null;
+  let targetX = 0;
 
-  const onMove = (clientX) => {
+  const performUpdate = () => {
+    rafId = null;
     if (!isDragging) return;
-    const rect = el.sliderContainer.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const pos = ((clientX - rect.left) / rect.width) * 100;
-    setSliderPosition(pos);
+    if (!cachedRect || cachedRect.width <= 0) {
+      cachedRect = el.sliderContainer.getBoundingClientRect();
+    }
+    if (cachedRect && cachedRect.width > 0) {
+      const pos = ((targetX - cachedRect.left) / cachedRect.width) * 100;
+      setSliderPosition(pos);
+    }
   };
 
-  el.sliderContainer.addEventListener('mousedown', (e) => {
+  const scheduleMove = (clientX) => {
+    targetX = clientX;
+    if (rafId === null) {
+      rafId = requestAnimationFrame(performUpdate);
+    }
+  };
+
+  // Pointer Events API: unified, high-performance handling across mouse, touch, and stylus
+  el.sliderContainer.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; // Primary button only
     isDragging = true;
-    onMove(e.clientX);
+    cachedRect = el.sliderContainer.getBoundingClientRect();
+    try {
+      el.sliderContainer.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    scheduleMove(e.clientX);
   });
-  window.addEventListener('mouseup', () => { isDragging = false; });
-  window.addEventListener('mousemove', (e) => onMove(e.clientX));
 
-  el.sliderContainer.addEventListener('touchstart', (e) => {
-    isDragging = true;
-    if (e.touches && e.touches.length > 0) {
-      onMove(e.touches[0].clientX);
-    }
-  }, { passive: true });
-  window.addEventListener('touchend', () => { isDragging = false; });
-  window.addEventListener('touchmove', (e) => {
-    if (e.touches && e.touches.length > 0) {
-      onMove(e.touches[0].clientX);
-    }
-  }, { passive: true });
+  el.sliderContainer.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    scheduleMove(e.clientX);
+  });
 
-  // Keyboard accessibility
+  const stopDragging = (e) => {
+    if (isDragging) {
+      isDragging = false;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      try {
+        el.sliderContainer.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+      cachedRect = null;
+    }
+  };
+
+  el.sliderContainer.addEventListener('pointerup', stopDragging);
+  el.sliderContainer.addEventListener('pointercancel', stopDragging);
+
+  // Keyboard accessibility per W3C Slider Pattern
   el.sliderContainer.addEventListener('keydown', (e) => {
     let currentPos = parseFloat(el.sliderContainer.getAttribute('aria-valuenow')) || 50;
     const step = e.shiftKey ? 10 : 2;
@@ -1964,6 +2056,7 @@ function setupSplitSlider() {
   if (window.ResizeObserver) {
     const observer = new ResizeObserver(() => {
       if (el.compareDialog.open) {
+        cachedRect = null;
         syncSliderDimensions();
       }
     });
@@ -1988,15 +2081,25 @@ function openCompareModal(item) {
 
   openDialog(el.compareDialog);
 
-  // Sync dimensions only after both images have loaded so the container
-  // has settled into its final layout before the clip calculation runs.
-  let loadedCount = 0;
-  const onImageLoad = () => {
-    loadedCount++;
-    if (loadedCount >= 2) syncSliderDimensions();
+  const checkAndSync = () => {
+    syncSliderDimensions();
+    setSliderPosition(50);
   };
-  el.beforeImg.onload = onImageLoad;
-  el.afterImg.onload = onImageLoad;
+
+  // If already cached or immediately ready, sync on next paint
+  if (el.beforeImg.complete && el.afterImg.complete && el.beforeImg.naturalWidth > 0 && el.afterImg.naturalWidth > 0) {
+    requestAnimationFrame(checkAndSync);
+  } else {
+    let loadedCount = 0;
+    const onImageLoad = () => {
+      loadedCount++;
+      if (loadedCount >= 2) {
+        requestAnimationFrame(checkAndSync);
+      }
+    };
+    el.beforeImg.onload = onImageLoad;
+    el.afterImg.onload = onImageLoad;
+  }
 
   requestAnimationFrame(() => {
     syncSliderDimensions();
@@ -2019,7 +2122,13 @@ function createZipBlob(files) {
   const usedNames = new Set();
 
   for (const file of files) {
-    let cleanName = (file.name || 'restored_image.png').replace(/^(\.\.[\/\\])+/, '').replace(/[\/\\]+/g, '_');
+    let cleanName = (file.name || 'restored_image.png')
+      .replace(/[\x00-\x1f\x7f]/g, '')
+      .replace(/^(\.\.[\/\\])+/, '')
+      .replace(/[\/\\]+/g, '_')
+      .trim();
+    if (!cleanName) cleanName = 'restored_image.png';
+
     if (usedNames.has(cleanName)) {
       const dotIdx = cleanName.lastIndexOf('.');
       const base = dotIdx !== -1 ? cleanName.slice(0, dotIdx) : cleanName;
@@ -2368,6 +2477,15 @@ if (typeof module !== 'undefined' && module.exports) {
     buildApiHeaders,
     isAuthConfigured,
     switchAuthMode,
+    parseGeminiError,
+    extractRetryDelayMs,
+    isDailyQuotaExceeded,
+    isFatalApiError,
+    sanitizeApiKey,
+    escapeHtml,
+    calculateCrc32,
+    createZipBlob,
+    GEMINI_ASPECT_RATIOS,
     state
   };
 }
