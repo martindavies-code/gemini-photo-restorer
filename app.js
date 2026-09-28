@@ -5,6 +5,75 @@
  * Native In-Browser Zero-Dependency ZIP Packaging, and Memory Lifecycle Management.
  */
 
+// ─── Toast Notification System ───────────────────────────────────────────────
+// Replaces all browser alert() calls. Non-blocking, screen-reader friendly,
+// auto-dismisses. Types: 'success' | 'error' | 'warning' | 'info'
+const TOAST_ICONS = {
+  success: '✓',
+  error:   '✕',
+  warning: '⚠',
+  info:    'ℹ',
+};
+
+function showToast(message, type = 'info', durationMs = 4500) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.setAttribute('role', 'alert');
+  toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  toast.innerHTML = `
+    <span class="toast-icon" aria-hidden="true">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
+    <span class="toast-message">${message}</span>
+    <button type="button" class="toast-close" aria-label="Dismiss notification">✕</button>
+  `;
+
+  toast.querySelector('.toast-close').addEventListener('click', () => dismissToast(toast));
+  container.appendChild(toast);
+
+  // Trigger entrance animation on next frame
+  requestAnimationFrame(() => toast.classList.add('toast-visible'));
+
+  const timer = setTimeout(() => dismissToast(toast), durationMs);
+  toast._timer = timer;
+}
+
+function dismissToast(toast) {
+  clearTimeout(toast._timer);
+  toast.classList.remove('toast-visible');
+  toast.classList.add('toast-hiding');
+  toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+}
+
+// ─── ARIA Live Announcer ──────────────────────────────────────────────────────
+// Announces status changes to screen readers without interrupting flow.
+function announceToScreenReader(message) {
+  const live = document.getElementById('ariaLive');
+  if (!live) return;
+  // Clear then re-set to force re-announcement of identical messages
+  live.textContent = '';
+  requestAnimationFrame(() => { live.textContent = message; });
+}
+
+// ─── API Key Status Indicator ────────────────────────────────────────────────
+function updateApiKeyStatus() {
+  const hasKey = Boolean(state.apiKey);
+  const pill   = document.getElementById('apiKeyStatus');
+  const text   = document.getElementById('apiKeyStatusText');
+  const banner = document.getElementById('onboardingBanner');
+  const liveStatus = document.getElementById('apiKeyLiveStatus');
+
+  if (pill) {
+    pill.className = `api-key-pill ${hasKey ? 'api-key-ok' : 'api-key-missing'}`;
+    pill.title = hasKey ? 'API key configured' : 'No API key — click Preferences to add one';
+  }
+  if (text)       text.textContent = hasKey ? '✓ API Key Set' : '⚠ No API Key';
+  if (banner)     banner.style.display = hasKey ? 'none' : 'flex';
+  if (liveStatus) liveStatus.textContent = hasKey ? '✓ Key saved' : '';
+}
+
+
 const DEFAULT_PROMPT = `You are a Senior High-End Photo Retoucher and AI Restoration Specialist with 20 years of experience working for top-tier publications like National Geographic and Vogue. You possess expert knowledge of photogrammetry, texture reconstruction, and professional studio lighting setups.
 
 I have a low-quality source image that suffers from severe JPEG compression, digital noise, and lack of definition. It needs to be transformed into a gallery-quality asset suitable for large-format printing.
@@ -224,6 +293,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSplitSlider();
   setupDialogBackdropDismiss();
   updateWorkflowStep();
+  updateApiKeyStatus();
+
+  // API key show/hide toggle
+  const toggleBtn = document.getElementById('toggleApiKeyBtn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const input = el.apiKeyInput;
+      const isHidden = input.type === 'password';
+      input.type = isHidden ? 'text' : 'password';
+      toggleBtn.setAttribute('aria-label', isHidden ? 'Hide API key' : 'Show API key');
+    });
+  }
 
   // Check if a previously selected directory handle exists in IndexedDB
   const storedHandle = await getStoredDirectoryHandle();
@@ -346,7 +427,9 @@ function setupEventListeners() {
     localStorage.setItem('lumina_prompt', state.prompt);
 
     updateModelLabel();
+    updateApiKeyStatus();
     el.settingsDialog.close();
+    showToast('Preferences saved.', 'success', 2500);
   });
 
   // Compare Dialog
@@ -391,7 +474,7 @@ async function reopenSavedFolder() {
   if (!storedHandle) return;
   try {
     if (!(await verifyHandlePermission(storedHandle, true))) {
-      alert('Permission to access previously chosen folder was not granted.');
+      showToast('Permission to access the previously chosen folder was denied. Please choose the folder again.', 'warning', 6000);
       return;
     }
     await loadDirectoryHandle(storedHandle);
@@ -493,13 +576,49 @@ function addFilesToQueue(newFiles) {
 }
 
 function clearQueue() {
-  state.filesQueue.forEach(item => {
-    if (item.originalUrl) revokeManagedUrl(item.originalUrl);
-    if (item.restoredUrl) revokeManagedUrl(item.restoredUrl);
+  if (state.isProcessing) {
+    showToast('Cannot clear the queue while processing is active. Stop processing first.', 'warning');
+    return;
+  }
+  const count = state.filesQueue.length;
+  if (count === 0) return;
+
+  // Custom in-app confirmation — no browser confirm() which is also blocking
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  // Dismiss any existing confirm toasts
+  container.querySelectorAll('.toast-confirm').forEach(t => t.remove());
+
+  const confirmToast = document.createElement('div');
+  confirmToast.className = 'toast toast-confirm toast-visible';
+  confirmToast.setAttribute('role', 'alertdialog');
+  confirmToast.setAttribute('aria-label', `Remove all ${count} images from queue?`);
+  confirmToast.innerHTML = `
+    <span class="toast-icon" aria-hidden="true">⚠</span>
+    <span class="toast-message">Remove all <strong>${count}</strong> image${count !== 1 ? 's' : ''} from the queue?</span>
+    <div class="toast-actions">
+      <button type="button" class="toast-btn-confirm">Clear All</button>
+      <button type="button" class="toast-btn-cancel">Keep</button>
+    </div>
+  `;
+
+  confirmToast.querySelector('.toast-btn-confirm').addEventListener('click', () => {
+    confirmToast.remove();
+    state.filesQueue.forEach(item => {
+      if (item.originalUrl) revokeManagedUrl(item.originalUrl);
+      if (item.restoredUrl) revokeManagedUrl(item.restoredUrl);
+    });
+    state.filesQueue = [];
+    renderQueue();
+    updateWorkflowStep();
+    showToast(`Queue cleared — ${count} image${count !== 1 ? 's' : ''} removed.`, 'info', 3000);
+    announceToScreenReader('Queue cleared.');
   });
-  state.filesQueue = [];
-  renderQueue();
-  updateWorkflowStep();
+
+  confirmToast.querySelector('.toast-btn-cancel').addEventListener('click', () => confirmToast.remove());
+  container.appendChild(confirmToast);
+  confirmToast.querySelector('.toast-btn-confirm').focus();
 }
 
 function renderQueue() {
@@ -544,7 +663,7 @@ async function retrySingleImage(item) {
   if (state.isProcessing) return;
   if (!state.apiKey) {
     el.settingsDialog.showModal();
-    alert('Please enter your Gemini API Key in Preferences to proceed.');
+    showToast('Please add your Gemini API Key in Preferences to continue.', 'warning');
     return;
   }
 
@@ -663,7 +782,7 @@ function handleStopProcessing() {
 async function startBatchProcessing() {
   if (!state.apiKey) {
     el.settingsDialog.showModal();
-    alert('Please enter your Gemini API Key in Preferences to proceed.');
+    showToast('Please add your Gemini API Key in Preferences to continue.', 'warning');
     return;
   }
 
@@ -690,7 +809,9 @@ async function startBatchProcessing() {
 
     item.status = 'processing';
     updateCardStatus(item);
-    updateProgress(processed, total, `Restoring [${i + 1} of ${total}] ${item.file.name}...`);
+    const progressMsg = `Restoring [${i + 1} of ${total}] ${item.file.name}...`;
+    updateProgress(processed, total, progressMsg);
+    announceToScreenReader(progressMsg);
 
     const t0 = performance.now();
     state.activeAbortController = new AbortController();
@@ -747,8 +868,15 @@ async function startBatchProcessing() {
   state.isProcessing = false;
   el.startBatchBtn.disabled = false;
   el.stopBatchBtn.style.display = 'none';
-  el.progressText.textContent = state.shouldStop ? 'Restoration paused.' : 'All restorations complete.';
+  const doneMsg = state.shouldStop ? 'Processing stopped.' : 'All restorations complete ✓';
+  el.progressText.textContent = doneMsg;
+  announceToScreenReader(doneMsg);
+  if (!state.shouldStop) {
+    const restoredCount = state.filesQueue.filter(i => i.status === 'restored').length;
+    showToast(`✓ ${restoredCount} image${restoredCount !== 1 ? 's' : ''} restored successfully.`, 'success', 6000);
+  }
   updateWorkflowStep();
+  renderQueue(); // refresh ZIP button visibility
 }
 
 function updateProgress(current, total, text) {

@@ -11,6 +11,12 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+  <!-- Skip-nav link (accessibility) -->
+  <a href="#studioMain" class="skip-nav">Skip to main content</a>
+  <!-- ARIA live region: screen readers announce processing updates silently -->
+  <div id="ariaLive" role="status" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+  <!-- Toast notification container -->
+  <div id="toastContainer" class="toast-container" aria-live="assertive" aria-atomic="false"></div>
   <div class="studio-app">
     <!-- Studio Header -->
     <header class="studio-header">
@@ -31,11 +37,15 @@
 
       <div class="header-right">
         <div class="engine-badge" title="Active Model">
-          <span class="engine-dot"></span>
+          <span class="engine-dot" id="engineDot"></span>
           <span id="activeModelLabel">Gemini 3 Pro Image (4K Studio)</span>
         </div>
-        <button type="button" class="btn-studio-ghost" id="openSettingsBtn" aria-label="Open settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- API key status indicator -->
+        <div id="apiKeyStatus" class="api-key-pill api-key-missing" title="No API key set — click Preferences to add one">
+          <span id="apiKeyStatusText">⚠️ No API Key</span>
+        </div>
+        <button type="button" class="btn-studio btn-studio-ghost" id="openSettingsBtn" aria-label="Open preferences" aria-haspopup="dialog">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
@@ -63,7 +73,16 @@
     </nav>
 
     <!-- Main Workspace -->
-    <main class="studio-main">
+    <main class="studio-main" id="studioMain">
+      <!-- Onboarding banner: shown only when no API key is set -->
+      <div class="onboarding-banner" id="onboardingBanner" style="display:none;" role="alert">
+        <span class="onboarding-icon" aria-hidden="true">🔑</span>
+        <div class="onboarding-copy">
+          <strong>First time? Add your Gemini API key to get started.</strong>
+          <span>It's stored only in your browser — never sent anywhere except Google's API.</span>
+        </div>
+        <button type="button" class="btn-studio btn-studio-primary" onclick="document.getElementById('openSettingsBtn').click()">Add API Key</button>
+      </div>
       <!-- Session Bar: Consolidated directory & batch trigger -->
       <section class="session-bar">
         <div class="session-source">
@@ -89,14 +108,18 @@
         </div>
 
         <div class="session-execution">
-          <button type="button" class="btn-studio btn-studio-primary" id="startBatchBtn" disabled>
+          <button type="button" class="btn-studio btn-studio-primary" id="startBatchBtn" disabled aria-describedby="startBatchHint">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
             <span>Start Forensic Restoration</span>
           </button>
-          <button type="button" class="btn-studio btn-studio-danger" id="stopBatchBtn" style="display: none;">
-            <span>Pause Processing</span>
+          <span id="startBatchHint" class="sr-only">Add images to the queue and enter your API key in Preferences to enable</span>
+          <button type="button" class="btn-studio btn-studio-danger" id="stopBatchBtn" style="display: none;" aria-label="Stop processing after current image completes">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="1"></rect>
+            </svg>
+            <span>Stop Processing</span>
           </button>
         </div>
 
@@ -141,13 +164,18 @@
       <section class="queue-panel" id="queueSection" style="display: none;">
         <div class="queue-toolbar">
           <div class="toolbar-left">
-            <h2 class="queue-title">Image Queue</h2>
-            <span class="queue-count-pill" id="queueCount">0 items</span>
+            <h2 class="queue-title" id="queueHeading">Image Queue</h2>
+            <span class="queue-count-pill" id="queueCount" aria-live="polite" aria-atomic="true">0 items</span>
           </div>
           <div class="toolbar-right">
-            <button type="button" class="btn-studio-text" id="clearAllBtn">Clear Queue</button>
-            <button type="button" class="btn-studio btn-studio-secondary" id="downloadZipBtn" style="display: none;">
-              Download Restored ZIP
+            <button type="button" class="btn-studio-text" id="clearAllBtn" aria-label="Clear all images from queue">Clear Queue</button>
+            <button type="button" class="btn-studio btn-studio-secondary" id="downloadZipBtn" style="display: none;" aria-label="Download all restored images as a ZIP archive">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Download All (ZIP)
             </button>
           </div>
         </div>
@@ -159,11 +187,11 @@
     </main>
 
     <!-- Forensic Before/After Comparison Dialog -->
-    <dialog class="studio-dialog compare-modal" id="compareDialog">
+    <dialog class="studio-dialog compare-modal" id="compareDialog" aria-labelledby="compareModalTitle" aria-modal="true">
       <div class="modal-card">
         <div class="modal-header">
           <div>
-            <h3 class="modal-title">Forensic Detail Inspection</h3>
+            <h3 class="modal-title" id="compareModalTitle">Forensic Detail Inspection</h3>
             <div class="compare-header-meta">
               <span class="modal-meta" id="compareFilename">source_image.jpg</span>
               <span class="aspect-pill" id="compareAspectBadge">Auto Aspect Preserved</span>
@@ -191,18 +219,25 @@
         </div>
 
         <div class="modal-footer">
-          <p class="inspection-hint">Slide horizontally to inspect texture reconstruction, skin pores, and softbox depth.</p>
-          <a class="btn-studio btn-studio-primary" id="downloadRestoredBtn" href="#" download>Download Fullsize PNG</a>
+          <p class="inspection-hint">Drag the slider to inspect texture reconstruction — use <kbd>←</kbd><kbd>→</kbd> arrow keys for precise comparison.</p>
+          <a class="btn-studio btn-studio-primary" id="downloadRestoredBtn" href="#" download aria-label="Download full-resolution restored image">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download Fullsize PNG
+          </a>
         </div>
       </div>
     </dialog>
 
     <!-- Studio Preferences Dialog -->
-    <dialog class="studio-dialog" id="settingsDialog">
+    <dialog class="studio-dialog" id="settingsDialog" aria-labelledby="prefsModalTitle" aria-modal="true">
       <div class="modal-card preferences-card">
         <div class="modal-header">
           <div>
-            <h3 class="modal-title">Studio Preferences</h3>
+            <h3 class="modal-title" id="prefsModalTitle">Studio Preferences</h3>
             <p class="modal-meta">Model parameters and credentials</p>
           </div>
           <button type="button" class="btn-studio-close" id="closeSettingsBtn" aria-label="Close preferences">✕</button>
@@ -210,9 +245,20 @@
 
         <div class="modal-body">
           <div class="form-group">
-            <label for="apiKeyInput" class="form-label">Gemini API Key</label>
-            <input type="password" id="apiKeyInput" class="form-input" placeholder="Enter key (stored only in your browser localStorage)" autocomplete="off">
-            <span class="form-helper">Get an API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>. Automatically synced with local <code>.env</code> when served locally.</span>
+            <div class="label-with-action">
+              <label for="apiKeyInput" class="form-label">Gemini API Key</label>
+              <span id="apiKeyLiveStatus" class="api-key-live-status"></span>
+            </div>
+            <div class="api-key-field-wrap">
+              <input type="password" id="apiKeyInput" class="form-input" placeholder="AIza..." autocomplete="off" aria-describedby="apiKeyHint" spellcheck="false">
+              <button type="button" class="btn-show-key" id="toggleApiKeyBtn" aria-label="Show API key" title="Toggle visibility">
+                <svg id="eyeIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+            <span id="apiKeyHint" class="form-helper">Get a free API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>. Stored only in your browser's localStorage.</span>
           </div>
 
           <div class="form-grid-2">
