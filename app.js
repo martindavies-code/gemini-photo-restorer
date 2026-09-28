@@ -262,8 +262,14 @@ function isDailyQuotaExceeded(errJson, errText) {
  */
 function isFatalApiError(status, errJson, errText) {
   const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
-  if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || combined.includes('invalid_argument'))) return true;
-  if (status === 401 || status === 403) return true;
+  // Only treat as fatal if the key itself is explicitly rejected.
+  // NOTE: Do NOT flag 'invalid_argument' as fatal — that error also fires for
+  // bad payloads, unsupported model names, and wrong generation configs.
+  // Those are user-fixable without a new key and should NOT stop the batch.
+  if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid'))) return true;
+  if (status === 401) return true;
+  // 403 can mean quota block (retriable) or key suspended (fatal) — only flag fatal if key is explicitly mentioned
+  if (status === 403 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || (combined.includes('permission_denied') && combined.includes('key')))) return true;
   return false;
 }
 
@@ -707,11 +713,21 @@ function setupEventListeners() {
   el.closeSettingsBtn.addEventListener('click', () => closeDialog(el.settingsDialog));
   el.resetPromptBtn.addEventListener('click', () => { el.promptInput.value = DEFAULT_PROMPT; });
   el.saveSettingsBtn.addEventListener('click', () => {
+    const previousKey = state.apiKey;
     state.apiKey = sanitizeApiKey(el.apiKeyInput.value);
     state.model = el.modelSelect.value;
     state.resolution = el.resolutionSelect.value;
     state.aspectRatio = el.aspectRatioSelect ? el.aspectRatioSelect.value : 'auto';
     state.prompt = el.promptInput.value.trim() || DEFAULT_PROMPT;
+
+    // If the API key changed, clear any lingering rate-limit state so the new key
+    // gets a completely fresh start. Old cooldowns from a different project/account
+    // should never carry over to a newly entered key.
+    if (state.apiKey !== previousKey) {
+      state.rateLimitResetUntil = 0;
+      state.consecutiveRateLimits = 0;
+      console.info('[Settings] API key changed — rate-limit cooldown state cleared for fresh start.');
+    }
 
     localStorage.setItem('lumina_api_key', state.apiKey);
     localStorage.setItem('lumina_model', state.model);
@@ -1213,6 +1229,11 @@ async function startBatchProcessing() {
   state.shouldStop = false;
   state.activeAbortController = null;
   batchStartTime = performance.now();
+  // Always start each batch with a clean rate-limit slate.
+  // If an old cooldown was set from a previous batch, it should never block
+  // a fresh batch that the user explicitly started.
+  state.rateLimitResetUntil = 0;
+  state.consecutiveRateLimits = 0;
   el.startBatchBtn.disabled = true;
   el.stopBatchBtn.style.display = 'inline-flex';
   el.progressSection.style.display = 'flex';

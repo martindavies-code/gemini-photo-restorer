@@ -522,16 +522,24 @@ test('isDailyQuotaExceeded distinguishes permanent daily limits from transient p
 test('isFatalApiError fast-fails unrecoverable auth errors without futile retries', () => {
   function isFatalApiError(status, errJson, errText) {
     const combined = `${errJson?.error?.message || ''} ${errText || ''}`.toLowerCase();
-    if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || combined.includes('invalid_argument'))) return true;
-    if (status === 401 || status === 403) return true;
+    if (status === 400 && (combined.includes('api_key_invalid') || combined.includes('api key not valid'))) return true;
+    if (status === 401) return true;
+    if (status === 403 && (combined.includes('api_key_invalid') || combined.includes('api key not valid') || (combined.includes('permission_denied') && combined.includes('key')))) return true;
     return false;
   }
 
-  // Fatal errors
+  // Fatal errors - explicitly invalid key
   assert.equal(isFatalApiError(400, { error: { message: 'API_KEY_INVALID: API key not valid' } }, ''), true);
   assert.equal(isFatalApiError(401, null, 'Unauthorized'), true);
-  assert.equal(isFatalApiError(403, { error: { message: 'The caller does not have permission' } }, ''), true);
-  assert.equal(isFatalApiError(403, null, 'Billing not enabled for project'), true);
+  assert.equal(isFatalApiError(403, null, 'api key not valid for this project'), true);
+
+  // Non-fatal: 400 + invalid_argument should retry (could be model name, payload, config issues)
+  assert.equal(isFatalApiError(400, { error: { message: 'invalid_argument: model not found' } }, ''), false, '400+invalid_argument must NOT be fatal - could be model access issue');
+  assert.equal(isFatalApiError(400, { error: { message: 'invalid_argument: request payload size exceeds limit' } }, ''), false, '400+invalid_argument payload errors must retry');
+
+  // Non-fatal: 403 quota/billing blocks should NOT permanently halt - user can fix
+  assert.equal(isFatalApiError(403, { error: { message: 'The caller does not have permission' } }, ''), false, 'bare 403 permission denied is not necessarily fatal (could be quota)');
+  assert.equal(isFatalApiError(403, null, 'Billing not enabled for project'), false, 'billing 403 is not a key issue');
 
   // Non-fatal transient errors (should be retried)
   assert.equal(isFatalApiError(429, { error: { message: 'Resource has been exhausted' } }, ''), false);
