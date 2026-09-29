@@ -888,10 +888,22 @@ function setupEventListeners() {
     if (el.gcpRegionSelect) state.gcpRegion = el.gcpRegionSelect.value;
     if (el.gcpClientIdInput) state.gcpCustomClientId = el.gcpClientIdInput.value.trim();
     if (el.gcpAccessTokenInput) {
-      state.gcpManualToken = el.gcpAccessTokenInput.value.trim();
-      if (state.gcpManualToken) {
-        state.vertexToken = state.gcpManualToken;
-        state.vertexTokenExpiry = Date.now() + (3600 * 1000);
+      const rawToken = el.gcpAccessTokenInput.value.trim();
+      // Auto-detect if user accidentally pasted an API key (AQ... or AIza...) into Direct Access Token
+      if (rawToken.startsWith('AQ.') || rawToken.startsWith('AIza')) {
+        state.apiKey = rawToken;
+        state.authMode = 'apikey';
+        state.gcpManualToken = '';
+        state.vertexToken = null;
+        if (el.apiKeyInput) el.apiKeyInput.value = rawToken;
+        el.gcpAccessTokenInput.value = '';
+        showToast('Detected Gemini API Key — automatically saved to API Key tab and activated.', 'info', 5000);
+      } else {
+        state.gcpManualToken = rawToken;
+        if (state.gcpManualToken) {
+          state.vertexToken = state.gcpManualToken;
+          state.vertexTokenExpiry = Date.now() + (3600 * 1000);
+        }
       }
     }
 

@@ -318,12 +318,13 @@
             <div class="form-group">
               <label class="form-label" for="gcpRegionSelect">Vertex AI Region</label>
               <select id="gcpRegionSelect" class="form-select">
-                <option value="us-central1" selected>us-central1 (Iowa — Recommended)</option>
+                <option value="us-central1" selected>us-central1 (Iowa — Required for Image Models)</option>
+                <option value="europe-west2">europe-west2 (London)</option>
                 <option value="us-east4">us-east4 (N. Virginia)</option>
                 <option value="europe-west4">europe-west4 (Netherlands)</option>
-                <option value="europe-west2">europe-west2 (London)</option>
                 <option value="asia-northeast1">asia-northeast1 (Tokyo)</option>
               </select>
+              <span class="form-helper">Note: Gemini multimodal image models are deployed in <code>us-central1</code>.</span>
             </div>
 
             <div class="form-group">
