@@ -1916,29 +1916,39 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
           continue;
         }
 
-        // 1. Fatal unrecoverable errors (invalid key, forbidden, suspended)
-        if (isFatalApiError(response.status, errJson, errText)) {
-          throw new Error(`Fatal API Error (${response.status}): ${errMessage}`);
-        }
+        // 1. Intelligent Model Auto-Fallback (Pro Image billing or 0-RPM quota -> Flash Image 4K Studio)
+        const combinedErr = `${errMessage} ${errText || ''}`.toLowerCase();
+        const isProBillingOrQuota = state.model === 'gemini-3-pro-image' && state.autoFallbackOnQuota && (
+          response.status === 429 ||
+          combinedErr.includes('billing') ||
+          combinedErr.includes('free tier') ||
+          combinedErr.includes('paid billing') ||
+          combinedErr.includes('enable billing') ||
+          (response.status === 403 && combinedErr.includes('permission'))
+        );
 
-        // 2. Permanent daily quota exhaustion (resets at midnight PT, waiting seconds won't help)
-        if (isDailyQuotaExceeded(errJson, errText)) {
-          throw new Error(`Daily API quota exceeded for your project (resets at midnight PT). Please check Google AI Studio or use a different key.`);
-        }
-
-        // 2b. Intelligent Model Auto-Fallback (Pro Image 0-RPM quota exhaustion -> Flash Image 4K Studio)
-        if (response.status === 429 && state.model === 'gemini-3-pro-image' && state.autoFallbackOnQuota) {
-          console.warn(`[Auto-Fallback] gemini-3-pro-image hit 0-RPM quota exhaustion (${errMessage}). Automatically switching to gemini-3.1-flash-image (preserving 4K Studio resolution) to continue batch.`);
+        if (isProBillingOrQuota) {
+          console.warn(`[Auto-Fallback] gemini-3-pro-image unavailable (${errMessage}). Automatically switching to gemini-3.1-flash-image (preserving 4K Studio resolution) to continue batch.`);
           state.model = 'gemini-3.1-flash-image';
           try { safeStorage.setItem('lumina_model', state.model); } catch (_) {}
           updateModelLabel();
           if (el.modelSelect) el.modelSelect.value = state.model;
-          showToast('Pro Image quota reached · Switched to Flash Image (4K Studio) to continue batch seamlessly.', 'info', 6000);
-          announceToScreenReader('Switched model to Gemini 3.1 Flash Image due to quota limit');
+          showToast('Pro Image requires paid billing · Switched to Flash Image (4K Studio) to continue batch seamlessly.', 'info', 6000);
+          announceToScreenReader('Switched model to Gemini 3.1 Flash Image');
           endpoint = buildApiEndpoint();
           state.consecutiveRateLimits = 0;
           state.rateLimitResetUntil = 0;
           continue;
+        }
+
+        // 2. Fatal unrecoverable errors (invalid key, forbidden, suspended)
+        if (isFatalApiError(response.status, errJson, errText)) {
+          throw new Error(`Fatal API Error (${response.status}): ${errMessage}`);
+        }
+
+        // 3. Permanent daily quota exhaustion (resets at midnight PT, waiting seconds won't help)
+        if (isDailyQuotaExceeded(errJson, errText)) {
+          throw new Error(`Daily API quota exceeded for your project (resets at midnight PT). Please check Google AI Studio or use a different key.`);
         }
 
         // 3. Transient rate-limit (429) or temporary server errors (5xx)
