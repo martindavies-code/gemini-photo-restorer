@@ -2404,8 +2404,8 @@ async function handleDownloadAllZip() {
 // Auth: OAuth2 Bearer token with cloud-platform scope
 // ============================================================
 
-// Web OAuth Client ID for Google Identity Services.
-// Users specify their own custom Web OAuth Client ID in Preferences.
+// Default Web OAuth Client ID for Google Identity Services.
+const OAUTH_CLIENT_ID = '668489071994-kud4nqqmsc9m14k0j0gs0ij5cr3rj8ma.apps.googleusercontent.com';
 let _tokenClient = null;
 let _pendingTokenResolve = null;
 let _pendingTokenReject = null;
@@ -2417,11 +2417,8 @@ let _pendingTokenReject = null;
 function initGisTokenClient() {
   if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return;
   const activeClientId = (state.gcpCustomClientId && state.gcpCustomClientId.trim()) ||
-                         (el.gcpClientIdInput && el.gcpClientIdInput.value.trim());
-
-  if (!activeClientId) {
-    throw new Error('OAuth Client ID required. Please enter your Web OAuth Client ID in Preferences, or use the Direct Access Token option below.');
-  }
+                         (el.gcpClientIdInput && el.gcpClientIdInput.value.trim()) ||
+                         OAUTH_CLIENT_ID;
 
   try {
     _tokenClient = google.accounts.oauth2.initTokenClient({
