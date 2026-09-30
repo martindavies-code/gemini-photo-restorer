@@ -1523,11 +1523,12 @@ async function startBatchProcessing() {
       item.status = 'cooldown';
       updateCardStatus(item, `Cooling down (${sec}s)...`);
       let detail = '';
-      if (state.model === 'gemini-3-pro-image') {
+      if (state.model === 'gemini-3-pro-image' && status === 429) {
         detail = ' · GCP Quota: Pro Image has a low 0–1 RPM default quota (Switch to Flash in Preferences)';
       }
-      updateProgress(processed, total, `Rate limit (${status || 429}) · retrying in ${sec}s (${item.file.name})${detail}`, batchStartTime);
-      announceToScreenReader(`Rate limit cooldown. Waiting ${sec} seconds.`);
+      const statusText = status === 'Network' ? 'Network error' : `Rate limit (${status || 429})`;
+      updateProgress(processed, total, `${statusText} · retrying in ${sec}s (${item.file.name})${detail}`, batchStartTime);
+      announceToScreenReader(`${statusText}. Waiting ${sec} seconds.`);
     };
 
     // Pipeline: Pre-warm payload preparation for the next pending image in the background
@@ -1997,6 +1998,17 @@ async function callGeminiImageRestoration(file, signal = null, onCountdownTick =
       }
       lastError = err;
 
+      // In Vertex AI mode on static web hosting (e.g. GitHub Pages), direct browser fetch
+      // to aiplatform.googleapis.com is blocked by browser CORS policy.
+      if (state.authMode === 'vertex' && (err instanceof TypeError || err.message?.includes('fetch'))) {
+        console.error('[Vertex AI] Browser CORS restriction encountered:', err);
+        throw new Error(
+          'Browser CORS Block: Google Cloud Vertex AI (aiplatform.googleapis.com) does not permit direct calls from web browsers. ' +
+          'To use your GCP credits without browser CORS blocks, generate an API key in your GCP project at https://aistudio.google.com and enter it in the API Key tab in Preferences, ' +
+          'or switch the model to Gemini 3.1 Flash Image (Free Tier & Fast).'
+        );
+      }
+
       // Handle transient network drops
       const isNetworkError = err instanceof TypeError || err.message?.includes('fetch') || err.message?.includes('network');
       if (attempt < maxRetries && isNetworkError) {
@@ -2382,10 +2394,8 @@ async function handleDownloadAllZip() {
 // Auth: OAuth2 Bearer token with cloud-platform scope
 // ============================================================
 
-// Default OAuth Client ID for Google Identity Services.
-// Users can also specify their own custom Web OAuth Client ID in Preferences.
-const OAUTH_CLIENT_ID = '668489071994-kud4nqqmsc9m14k0j0gs0ij5cr3rj8ma.apps.googleusercontent.com';
-
+// Web OAuth Client ID for Google Identity Services.
+// Users specify their own custom Web OAuth Client ID in Preferences.
 let _tokenClient = null;
 let _pendingTokenResolve = null;
 let _pendingTokenReject = null;
@@ -2396,7 +2406,12 @@ let _pendingTokenReject = null;
  */
 function initGisTokenClient() {
   if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return;
-  const activeClientId = (state.gcpCustomClientId && state.gcpCustomClientId.trim()) || OAUTH_CLIENT_ID;
+  const activeClientId = (state.gcpCustomClientId && state.gcpCustomClientId.trim()) ||
+                         (el.gcpClientIdInput && el.gcpClientIdInput.value.trim());
+
+  if (!activeClientId) {
+    throw new Error('OAuth Client ID required. Please enter your Web OAuth Client ID in Preferences, or use the Direct Access Token option below.');
+  }
 
   try {
     _tokenClient = google.accounts.oauth2.initTokenClient({

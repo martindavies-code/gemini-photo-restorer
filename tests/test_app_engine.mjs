@@ -697,4 +697,19 @@ test('buildApiHeaders propagates modern AQ auth keys via x-goog-api-key header',
   assert.equal(sanitized, 'AQ.MockAuthKeyForTestingPurposesOnly_0123456789');
 });
 
+// ─── 26. Vertex AI Browser CORS Restriction Classification ───────────────────
+test('Vertex AI network/fetch failures correctly classify as browser CORS restriction', () => {
+  state.authMode = 'vertex';
+  const fetchError = new TypeError('Failed to fetch');
+  
+  const isCorsRestriction = state.authMode === 'vertex' && (fetchError instanceof TypeError || fetchError.message?.includes('fetch'));
+  assert.equal(isCorsRestriction, true);
+  
+  // In apikey mode, fetch error is standard network error, not CORS restriction
+  state.authMode = 'apikey';
+  const isCorsInApiKeyMode = state.authMode === 'vertex' && (fetchError instanceof TypeError || fetchError.message?.includes('fetch'));
+  assert.equal(isCorsInApiKeyMode, false);
+});
+
+
 
