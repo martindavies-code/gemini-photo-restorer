@@ -212,7 +212,7 @@ function parseGeminiError(err) {
   const isVertex = typeof state !== 'undefined' && state.authMode === 'vertex';
 
   if (msg.includes('billing') || msg.includes('free tier') || msg.includes('enable billing'))
-    return 'Billing required for this model — switch to Gemini 3.1 Flash Image in Preferences or enable billing';
+    return 'Billing required for Pro Image: This API key is unbilled. Ensure you created the key in an Incognito window under mdavies.ns@gmail.com in your billed GCP project (not martin.davies@gmail.com).';
   if ((msg.includes('daily') || msg.includes('per day')) && (msg.includes('quota') || msg.includes('exhausted') || msg.includes('limit')))
     return 'Daily API quota exhausted — resets tomorrow at midnight PT';
   if (msg.includes("limit '0'") || msg.includes("limit '1'") || msg.includes("limit 0") || msg.includes("limit 1"))
