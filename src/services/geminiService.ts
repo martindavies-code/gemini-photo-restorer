@@ -6,6 +6,10 @@ import {
   validateImageDimensions,
   sanitizePrompt
 } from '../utils/security';
+import {
+  findClosestGeminiAspectRatio,
+  realignImageToOriginalAspectRatio
+} from '../utils/aspectRatio';
 
 export const STORAGE_KEY_API_KEY = 'lumina_gemini_api_key';
 export const STORAGE_KEY_SELECTED_MODEL = 'lumina_selected_model';
@@ -169,12 +173,25 @@ export async function restoreImageWithGemini(options: RestoreImageOptions): Prom
 
   onProgress?.('Validating image and forensic prompt metadata...');
   const { base64, mimeType } = await fileToBase64(file);
+  const sourceDataUrl = `data:${mimeType};base64,${base64}`;
+
+  // Extract source dimensions to compute exact aspect ratio
+  const sourceDims = await getImageDimensions(sourceDataUrl);
+  const srcWidth = sourceDims.width || 1024;
+  const srcHeight = sourceDims.height || 1024;
+  const closestAspectRatio = findClosestGeminiAspectRatio(srcWidth, srcHeight);
 
   if (signal?.aborted) {
     throw new Error('Operation was cancelled.');
   }
 
-  onProgress?.(`Dispatching to ${model} (Google AI Studio)...`);
+  onProgress?.(`Dispatching to ${model} (Target Aspect Ratio: ${closestAspectRatio})...`);
+
+  // Zero distortion rule: enforce exact aspect ratio and framing in the prompt
+  const zeroDistortionConstraint = `\n\nCRITICAL GEOMETRIC INTEGRITY (ZERO DISTORTION RULE):
+Strictly preserve the exact original aspect ratio (${srcWidth}x${srcHeight}), framing, perspective, and composition.
+Do NOT crop edges, do NOT zoom in, do NOT stretch, squash, pad, letterbox, or pillarbox.
+Keep all subjects, landmarks, and facial features in their exact spatial positions. ONLY restore high-frequency micro-textures (skin pores, fabric weave, surface details), eliminate noise/compression, and refine studio lighting.`;
 
   // Secure endpoint: No credentials in query string. Transmit via x-goog-api-key header.
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -183,7 +200,7 @@ export async function restoreImageWithGemini(options: RestoreImageOptions): Prom
     contents: [
       {
         parts: [
-          { text: cleanPrompt },
+          { text: cleanPrompt + zeroDistortionConstraint },
           {
             inline_data: {
               mime_type: mimeType,
@@ -192,7 +209,14 @@ export async function restoreImageWithGemini(options: RestoreImageOptions): Prom
           }
         ]
       }
-    ]
+    ],
+    generationConfig: {
+      responseModalities: ['IMAGE'],
+      imageConfig: {
+        aspectRatio: closestAspectRatio,
+        imageSize: '1K'
+      }
+    }
   };
 
   let response: Response;
@@ -327,12 +351,14 @@ export async function restoreImageWithGemini(options: RestoreImageOptions): Prom
   }
 
   const resultDataUrl = `data:${imageMimeType};base64,${imageBase64}`;
-  const dims = await getImageDimensions(resultDataUrl);
+
+  onProgress?.('Locking geometry and realigning to exact source aspect ratio...');
+  const realigned = await realignImageToOriginalAspectRatio(resultDataUrl, srcWidth, srcHeight);
 
   return {
-    dataUrl: resultDataUrl,
-    width: dims.width,
-    height: dims.height,
+    dataUrl: realigned.dataUrl,
+    width: realigned.width,
+    height: realigned.height,
     model
   };
 }

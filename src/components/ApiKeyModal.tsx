@@ -76,9 +76,15 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               <ShieldCheck size={20} className="text-emerald" />
             </div>
             <div className="alert-content">
-              <strong>100% Free Personal API</strong>
-              <p>
-                Google AI Studio provides a free tier with personal rate limits (no credit card or subscription required).
+              <strong>Zero-Cost &amp; Billing Safety Guide</strong>
+              <p style={{ marginTop: '0.3rem', lineHeight: '1.4' }}>
+                <strong>• Client-Side Super-Scaler (1X, 2X, 4K, 8K):</strong> 100% Free ($0.00). Renders entirely in your browser using your local GPU/CPU.
+              </p>
+              <p style={{ marginTop: '0.3rem', lineHeight: '1.4' }}>
+                <strong>• Google AI Studio Key:</strong> If your key is from a project with <em>no credit card or billing account attached</em>, Google can never charge you. If you have linked a payment method in Google Cloud, Google bills ~$0.039 per generated image output.
+              </p>
+              <p style={{ marginTop: '0.4rem', color: '#38bdf8', fontSize: '0.82rem' }}>
+                💡 <em>To guarantee $0 charges: Ensure your API key is in a project with no linked billing account in Google Cloud Console.</em>
               </p>
               <a
                 href="https://aistudio.google.com/app/apikey"
@@ -86,7 +92,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                 rel="noreferrer"
                 className="get-key-link"
               >
-                <span>Get a free key at aistudio.google.com</span>
+                <span>Manage Keys at aistudio.google.com</span>
                 <ExternalLink size={13} />
               </a>
             </div>

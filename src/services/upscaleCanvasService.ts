@@ -88,7 +88,8 @@ export function calculateTargetDimensions(
  */
 export async function renderToTargetResolution(
   sourceDataUrl: string,
-  target: UpscaleTarget
+  target: UpscaleTarget,
+  originalDimensions?: { width: number; height: number }
 ): Promise<{ blob: Blob; width: number; height: number; dataUrl: string }> {
   if (!sourceDataUrl || !sourceDataUrl.startsWith('data:image/')) {
     throw new Error('Invalid or empty image data URL provided for upscaling.');
@@ -98,9 +99,16 @@ export async function renderToTargetResolution(
     const img = new Image();
 
     img.onload = () => {
+      const baseWidth = originalDimensions?.width && originalDimensions.width > 0
+        ? originalDimensions.width
+        : (img.naturalWidth || 1024);
+      const baseHeight = originalDimensions?.height && originalDimensions.height > 0
+        ? originalDimensions.height
+        : (img.naturalHeight || 1024);
+
       const { width: targetWidth, height: targetHeight } = calculateTargetDimensions(
-        img.naturalWidth,
-        img.naturalHeight,
+        baseWidth,
+        baseHeight,
         target
       );
 
@@ -122,7 +130,27 @@ export async function renderToTargetResolution(
       ctx.imageSmoothingQuality = 'high';
 
       try {
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        const targetRatio = targetWidth / targetHeight;
+        const imgRatio = (img.naturalWidth || targetWidth) / (img.naturalHeight || targetHeight);
+
+        // Sub-pixel geometric alignment: prevent stretching if AI output has discrete bucket padding
+        if (Math.abs(targetRatio - imgRatio) > 0.005) {
+          let srcX = 0;
+          let srcY = 0;
+          let srcW = img.naturalWidth;
+          let srcH = img.naturalHeight;
+
+          if (imgRatio > targetRatio) {
+            srcW = Math.round(img.naturalHeight * targetRatio);
+            srcX = Math.round((img.naturalWidth - srcW) / 2);
+          } else {
+            srcH = Math.round(img.naturalWidth / targetRatio);
+            srcY = Math.round((img.naturalHeight - srcH) / 2);
+          }
+          ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, targetWidth, targetHeight);
+        } else {
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        }
       } catch (drawErr) {
         canvas.width = 0;
         canvas.height = 0;

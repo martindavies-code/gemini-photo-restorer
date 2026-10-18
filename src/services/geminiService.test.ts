@@ -130,6 +130,13 @@ describe('Gemini Service - Authentication, Request Dispatch, and Error Handling'
 
     // Verify key is sent securely in headers
     expect(calledOptions.headers['x-goog-api-key']).toBe(validKey);
+
+    // Verify generationConfig includes imageConfig and aspect ratio to prevent Nano Banana distortion
+    const sentBody = JSON.parse(calledOptions.body);
+    expect(sentBody.generationConfig).toBeDefined();
+    expect(sentBody.generationConfig.imageConfig).toBeDefined();
+    expect(sentBody.generationConfig.imageConfig.aspectRatio).toBeDefined();
+    expect(sentBody.contents[0].parts[0].text).toContain('ZERO DISTORTION RULE');
   });
 
   it('handles 429 Rate Limit error gracefully with actionable guidance', async () => {

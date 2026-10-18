@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, Maximize, Sparkles, ChevronDown } from 'lucide-react';
+import { Cpu, Maximize, Sparkles, ChevronDown, Lock } from 'lucide-react';
 import type { SupportedModel, UpscaleTarget, RestorationPreset } from '../types';
 
 interface StudioControlBarProps {
@@ -83,6 +83,13 @@ export const StudioControlBar: React.FC<StudioControlBarProps> = ({
       </div>
 
       <div className="studio-bar-right">
+        <div
+          className="aspect-ratio-lock-badge"
+          title="Aspect Ratio Lock active: Reconstructs details while preserving exact original framing with 0% distortion or warping"
+        >
+          <Lock size={12} className="text-emerald" />
+          <span>Aspect Ratio Locked</span>
+        </div>
         <button className="sample-challenge-btn" onClick={onOpenSamples} title="Test with simulated degraded photos">
           <Sparkles size={14} className="text-cyan" />
           <span>Test Samples</span>

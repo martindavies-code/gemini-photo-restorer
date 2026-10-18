@@ -78,7 +78,8 @@ export const ComparisonSlider: React.FC<ComparisonSliderProps> = ({ job, onUpdat
     try {
       const { dataUrl, width, height } = await renderToTargetResolution(
         job.resultDataUrl,
-        job.targetScale
+        job.targetScale,
+        { width: job.metadata.originalWidth, height: job.metadata.originalHeight }
       );
       const cleanName = job.metadata.name.replace(/\.[^/.]+$/, '');
       const scaleTag = job.targetScale.toUpperCase();
